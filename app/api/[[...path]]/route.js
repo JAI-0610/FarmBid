@@ -14,6 +14,14 @@ import {
   districtData,
   produceTypes
 } from '@/lib/seedData'
+import {
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  verifyToken,
+  generateDID,
+  generateVerifiableCredential
+} from '@/lib/auth'
 
 // MongoDB connection
 let client
@@ -67,6 +75,183 @@ async function handleRoute(request, { params }) {
 
   try {
     const db = await connectToMongo()
+
+    // ===== AUTHENTICATION ENDPOINTS =====
+    
+    // POST /api/auth/signup - User registration with SSI
+    if (route === '/auth/signup' && method === 'POST') {
+      const body = await request.json()
+      const { name, email, password, phone, location, userType } = body
+
+      // Check if user exists
+      const existingUser = await db.collection('users').findOne({ email })
+      if (existingUser) {
+        return handleCORS(NextResponse.json({ success: false, error: 'Email already registered' }, { status: 400 }))
+      }
+
+      // Create user
+      const userId = uuidv4()
+      const hashedPassword = await hashPassword(password)
+      const did = generateDID(userId, userType)
+
+      const user = {
+        id: userId,
+        name,
+        email,
+        password: hashedPassword,
+        phone: phone || '',
+        location: location || '',
+        role: userType || 'buyer',
+        did,
+        trustScore: 100,
+        verified: false,
+        walletBalance: userType === 'buyer' ? 50000 : 0,
+        createdAt: new Date().toISOString(),
+        ssiCredentials: []
+      }
+
+      await db.collection('users').insertOne(user)
+
+      // Generate SSI Verifiable Credential
+      const credential = generateVerifiableCredential(user, `FarmBid${userType.charAt(0).toUpperCase() + userType.slice(1)}Credential`)
+      
+      // Store credential
+      await db.collection('users').updateOne(
+        { id: userId },
+        { $push: { ssiCredentials: credential } }
+      )
+
+      // Generate token
+      const token = generateToken(user)
+
+      // Create blockchain event for user registration
+      const blockchainEvent = {
+        id: uuidv4(),
+        type: 'user_registered',
+        entityId: userId,
+        description: `New ${userType} registered with SSI - DID: ${did.substring(0, 30)}...`,
+        txHash: '0x' + Array(40).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join(''),
+        blockNumber: 58234700 + Math.floor(Math.random() * 100),
+        timestamp: new Date().toISOString(),
+        network: 'Polygon Mainnet'
+      }
+
+      // Return user data (without password)
+      const { password: _, ...safeUser } = user
+
+      return handleCORS(NextResponse.json({
+        success: true,
+        user: safeUser,
+        token,
+        credential,
+        blockchainEvent
+      }))
+    }
+
+    // POST /api/auth/login - User login
+    if (route === '/auth/login' && method === 'POST') {
+      const body = await request.json()
+      const { email, password } = body
+
+      // Find user
+      const user = await db.collection('users').findOne({ email })
+      if (!user) {
+        return handleCORS(NextResponse.json({ success: false, error: 'Invalid email or password' }, { status: 401 }))
+      }
+
+      // Verify password
+      const isValid = await verifyPassword(password, user.password)
+      if (!isValid) {
+        return handleCORS(NextResponse.json({ success: false, error: 'Invalid email or password' }, { status: 401 }))
+      }
+
+      // Generate token
+      const token = generateToken(user)
+
+      // Return user data (without password)
+      const { password: _, ...safeUser } = user
+
+      return handleCORS(NextResponse.json({
+        success: true,
+        user: safeUser,
+        token
+      }))
+    }
+
+    // POST /api/auth/demo-login - Demo login for quick access
+    if (route === '/auth/demo-login' && method === 'POST') {
+      const body = await request.json()
+      const { role } = body
+
+      // Create or find demo user
+      const demoEmail = `demo-${role}@farmbid.io`
+      let user = await db.collection('users').findOne({ email: demoEmail })
+
+      if (!user) {
+        const userId = uuidv4()
+        const did = generateDID(userId, role)
+        
+        const demoNames = {
+          buyer: 'Demo Buyer (Bengaluru Fresh Foods)',
+          farmer: 'Demo Farmer (Ramappa Gowda)',
+          admin: 'Demo Admin (FarmBid Operations)'
+        }
+
+        user = {
+          id: userId,
+          name: demoNames[role] || 'Demo User',
+          email: demoEmail,
+          password: await hashPassword('demo123'),
+          role,
+          did,
+          trustScore: 100,
+          verified: true,
+          walletBalance: role === 'buyer' ? 250000 : role === 'farmer' ? 45000 : 0,
+          location: role === 'farmer' ? 'Kolar, Karnataka' : 'Bengaluru, Karnataka',
+          createdAt: new Date().toISOString(),
+          ssiCredentials: []
+        }
+
+        await db.collection('users').insertOne(user)
+      }
+
+      const token = generateToken(user)
+      const { password: _, ...safeUser } = user
+
+      return handleCORS(NextResponse.json({
+        success: true,
+        user: safeUser,
+        token
+      }))
+    }
+
+    // GET /api/auth/me - Get current user
+    if (route === '/auth/me' && method === 'GET') {
+      const authHeader = request.headers.get('authorization')
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return handleCORS(NextResponse.json({ success: false, error: 'No token provided' }, { status: 401 }))
+      }
+
+      const token = authHeader.split(' ')[1]
+      const decoded = verifyToken(token)
+      
+      if (!decoded) {
+        return handleCORS(NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 }))
+      }
+
+      const user = await db.collection('users').findOne({ id: decoded.userId })
+      if (!user) {
+        return handleCORS(NextResponse.json({ success: false, error: 'User not found' }, { status: 404 }))
+      }
+
+      const { password: _, ...safeUser } = user
+      return handleCORS(NextResponse.json({ success: true, user: safeUser }))
+    }
+
+    // POST /api/auth/logout - Logout (client-side token removal)
+    if (route === '/auth/logout' && method === 'POST') {
+      return handleCORS(NextResponse.json({ success: true, message: 'Logged out successfully' }))
+    }
 
     // ===== ROOT ENDPOINTS =====
     if ((route === '/' || route === '/root') && method === 'GET') {
