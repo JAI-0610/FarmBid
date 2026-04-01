@@ -29,7 +29,8 @@ import {
   Timer, IndianRupee, MapPin, Scale, Sparkles, Link2, ExternalLink,
   ArrowUpRight, ArrowDownRight, Send, Mic, Image as ImageIcon,
   Phone, MoreVertical, Check, Copy, Filter, RefreshCw, Truck,
-  FileText, CreditCard, Building2, Star, Award, Zap, Globe, Lock
+  FileText, CreditCard, Building2, Star, Award, Zap, Globe, Lock,
+  LogOut, User, Fingerprint
 } from 'lucide-react'
 
 // WhatsApp demo messages
@@ -610,6 +611,40 @@ export default function App() {
   const [whatsappLanguage, setWhatsappLanguage] = useState('english')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  
+  // Authentication state
+  const [currentUser, setCurrentUser] = useState(null)
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
+
+  // Check authentication on mount
+  useEffect(() => {
+    const checkAuth = () => {
+      const token = localStorage.getItem('farmbid_token')
+      const userData = localStorage.getItem('farmbid_user')
+      
+      if (token && userData) {
+        try {
+          const user = JSON.parse(userData)
+          setCurrentUser(user)
+          setIsAuthenticated(true)
+          setWalletBalance(user.walletBalance || 50000)
+        } catch (e) {
+          console.error('Error parsing user data:', e)
+          handleLogout()
+        }
+      }
+    }
+    checkAuth()
+  }, [])
+
+  // Handle logout
+  const handleLogout = () => {
+    localStorage.removeItem('farmbid_token')
+    localStorage.removeItem('farmbid_user')
+    setCurrentUser(null)
+    setIsAuthenticated(false)
+    window.location.href = '/login'
+  }
 
   // Fetch data
   useEffect(() => {
@@ -737,7 +772,7 @@ export default function App() {
 
             <div className="flex items-center gap-2">
               {/* Wallet */}
-              <Button variant="outline" className="gap-2">
+              <Button variant="outline" className="gap-2" onClick={() => setCurrentView('wallet')}>
                 <Wallet className="h-4 w-4" />
                 <span className="font-semibold">{formatINR(walletBalance)}</span>
               </Button>
@@ -753,11 +788,26 @@ export default function App() {
                 {darkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </Button>
 
-              {/* Profile */}
-              <Avatar className="h-8 w-8">
-                <AvatarImage src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150" />
-                <AvatarFallback>BF</AvatarFallback>
-              </Avatar>
+              {/* User Profile Dropdown */}
+              {currentUser ? (
+                <div className="flex items-center gap-2">
+                  <div className="hidden md:flex flex-col items-end">
+                    <span className="text-sm font-medium">{currentUser.name?.split(' ')[0] || 'User'}</span>
+                    <span className="text-xs text-muted-foreground capitalize">{currentUser.role}</span>
+                  </div>
+                  <Avatar className="h-8 w-8 cursor-pointer">
+                    <AvatarImage src={currentUser.profileImage || "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150"} />
+                    <AvatarFallback>{currentUser.name?.charAt(0) || 'U'}</AvatarFallback>
+                  </Avatar>
+                  <Button variant="ghost" size="icon" onClick={handleLogout} title="Logout">
+                    <LogOut className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="default" onClick={() => window.location.href = '/login'}>
+                  Sign In
+                </Button>
+              )}
             </div>
           </div>
         </header>
@@ -809,10 +859,18 @@ export default function App() {
                     <CardContent className="p-6">
                       <div className="flex items-center justify-between">
                         <div className="space-y-2">
-                          <h1 className="text-2xl font-bold">Welcome back, Buyer!</h1>
+                          <h1 className="text-2xl font-bold">
+                            Welcome{currentUser ? `, ${currentUser.name?.split(' ')[0]}` : ''}!
+                          </h1>
                           <p className="text-muted-foreground max-w-lg">
                             Farmers set the floor. Buyers bid upward. Every transaction anchored to blockchain.
                           </p>
+                          {currentUser?.did && (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-full w-fit">
+                              <Fingerprint className="h-3 w-3" />
+                              <span className="font-mono">{currentUser.did.substring(0, 35)}...</span>
+                            </div>
+                          )}
                           <div className="flex gap-2 pt-2">
                             <Button onClick={() => setCurrentView('auctions')}>
                               <Gavel className="h-4 w-4 mr-2" />
