@@ -10,10 +10,11 @@ const { anchorToBlockchain, createBlockchainEvent } = require('../utils/blockcha
 // GET /api/disputes - Get all disputes
 router.get('/', async (req, res, next) => {
   try {
-    const disputes = await Dispute.find()
+    const disputesResult = await Dispute.find()
       .sort({ createdAt: -1 })
-      .lean()
-      .map(d => ({ id: d._id, ...d }));
+      .lean();
+    
+    const disputes = disputesResult.map(d => ({ id: d._id, ...d }));
 
     res.json({
       success: true,

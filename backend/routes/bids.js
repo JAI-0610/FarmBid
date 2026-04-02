@@ -174,10 +174,11 @@ router.get('/', async (req, res, next) => {
 
     const query = listingId ? { listingId } : {};
 
-    const bids = await Bid.find(query)
+    const bidsResult = await Bid.find(query)
       .sort({ bidPerKg: -1, timestamp: 1 })
-      .lean()
-      .map(bid => ({
+      .lean();
+    
+    const bids = bidsResult.map(bid => ({
         id: bid._id,
         ...bid
       }));
@@ -223,10 +224,11 @@ router.get('/:id', async (req, res, next) => {
 // GET /api/bids/buyer/:buyerId - Get bids by buyer
 router.get('/buyer/:buyerId', async (req, res, next) => {
   try {
-    const bids = await Bid.find({ buyerId: req.params.buyerId })
+    const bidsResult = await Bid.find({ buyerId: req.params.buyerId })
       .sort({ timestamp: -1 })
-      .lean()
-      .map(bid => ({
+      .lean();
+    
+    const bids = bidsResult.map(bid => ({
         id: bid._id,
         ...bid
       }));

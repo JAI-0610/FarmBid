@@ -7,10 +7,11 @@ const Auction = require('../models/Auction');
 // GET /api/buyers - Get all buyers
 router.get('/', async (req, res, next) => {
   try {
-    const buyers = await Buyer.find()
+    const buyersResult = await Buyer.find()
       .sort({ trustScore: -1 })
-      .lean()
-      .map(b => ({ id: b._id, ...b }));
+      .lean();
+    
+    const buyers = buyersResult.map(b => ({ id: b._id, ...b }));
 
     res.json({
       success: true,
@@ -32,16 +33,18 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
-    const bids = await Bid.find({ buyerId: buyer._id.toString() })
+    const bidsResult = await Bid.find({ buyerId: buyer._id.toString() })
       .sort({ timestamp: -1 })
-      .lean()
-      .map(b => ({ id: b._id, ...b }));
+      .lean();
+    
+    const bids = bidsResult.map(b => ({ id: b._id, ...b }));
 
     // Get won auctions
-    const wonAuctions = await Auction.find({ buyerId: buyer._id.toString() })
+    const wonAuctionsResult = await Auction.find({ buyerId: buyer._id.toString() })
       .sort({ createdAt: -1 })
-      .lean()
-      .map(a => ({ id: a._id, ...a }));
+      .lean();
+    
+    const wonAuctions = wonAuctionsResult.map(a => ({ id: a._id, ...a }));
 
     res.json({
       success: true,

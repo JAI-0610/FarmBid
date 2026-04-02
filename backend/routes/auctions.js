@@ -9,10 +9,11 @@ const { anchorToBlockchain, createBlockchainEvent } = require('../utils/blockcha
 // GET /api/auctions/completed - Get completed/finished auctions
 router.get('/completed', async (req, res, next) => {
   try {
-    const auctions = await Auction.find({})
+    const auctionsResult = await Auction.find({})
       .sort({ createdAt: -1 })
-      .lean()
-      .map(a => ({ id: a._id, ...a }));
+      .lean();
+    
+    const auctions = auctionsResult.map(a => ({ id: a._id, ...a }));
 
     // Attach delivery information if exists
     const deliveryIds = auctions.map(a => a._id);

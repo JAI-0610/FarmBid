@@ -36,7 +36,57 @@ const uploadDir = path.resolve(process.cwd(), 'uploads/listings');
 // In-memory stores
 const farmerStore = new Map();
 const listingStore = new Map();
-const pendingWhatsAppMessages = [];
+
+// Localized strings
+const t = (key, lang = 'en', data = {}) => {
+  const strings = {
+    en: {
+      menu: (name) => `🏠 *${name}, what would you like to do?*\n\n1️⃣ Create new listing\n2️⃣ View active listings\n3️⃣ View trust score\n4️⃣ Change Language`,
+      reg_complete: (name) => `Registration complete, ${name}!\n\n1️⃣ Create new listing\n2️⃣ View active listings\n3️⃣ View trust score`,
+      step_photo: '📸 *Step 1/4: Photo*\n\nPlease send a clear photo of your produce.\n\n_Reply 0 to Cancel_',
+      listing_started: '📸 *Listing Started!*\n\n✅ Photo received.',
+      step_produce: '📦 *Step 2/4:* What are you selling?\n\n1️⃣ Tomatoes 🍅\n2️⃣ Onions 🧅\n3️⃣ Potatoes 🥔\n4️⃣ Green Chilies 🌶️\n5️⃣ Grapes 🍇\n\n_Or type produce name_',
+      step_weight: (prod) => `✅ *${prod}* noted!\n\n⚖️ *Step 3/4:* Send total weight in kg.\nExample: 500`,
+      step_price: (kg) => `✅ *${kg}kg* noted!\n\n💰 *Step 4/4:* What is your min price per kg?\nExample: 40`,
+      step_harvest: '✅ *Price noted!*\n\n🗓️ When will it be ready?\n\n1️⃣ Tomorrow\n2️⃣ 3 days\n3️⃣ 1 week\n4️⃣ 2 weeks',
+      listing_live: (id, name, qty, price) => `🎉 *CONGRATS! YOUR LISTING IS LIVE!*\n\n🔹 *ID:* ${id}\n🔹 *Item:* ${name}\n🔹 *Weight:* ${qty}kg\n🔹 *Min Price:* ₹${price}/kg\n\n🚀 Buyers are being notified!`,
+      cancel_back: '🏠 *Returned to Main Menu*',
+      no_active: '📭 You have no active listings right now.',
+      trust_score: (score) => `📊 Your trust score is *${score}/100*.`,
+      invalid_price: '⚠️ Please send price as a number (e.g. 40).',
+      invalid_weight: '⚠️ Please send weight as a number (e.g. 100).',
+      invalid_name: '⚠️ Select 1-5 or type the name of your produce.'
+    },
+    kn: {
+      menu: (name) => `🏠 *${name}, ನೀವು ಏನು ಮಾಡಲು ಬಯಸುತ್ತೀರಿ?*\n\n1️⃣ ಹೊಸ ಪಟ್ಟಿ ರಚಿಸಿ (Listing)\n2️⃣ ಸಕ್ರಿಯ ಪಟ್ಟಿಗಳನ್ನು ನೋಡಿ\n3️⃣ ವಿಶ್ವಾಸಾರ್ಹತೆ ಸ್ಕೋರ್ ನೋಡಿ\n4️⃣ ಭಾಷೆ ಬದಲಾಯಿಸಿ`,
+      reg_complete: (name) => `ನೋಂದಣಿ ಪೂರ್ಣಗೊಂಡಿದೆ, ${name}!\n\n1️⃣ ಹೊಸ ಪಟ್ಟಿ ರಚಿಸಿ\n2️⃣ ಸಕ್ರಿಯ ಪಟ್ಟಿಗಳನ್ನು ನೋಡಿ\n3️⃣ ವಿಶ್ವಾಸಾರ್ಹತೆ ಸ್ಕೋರ್ ನೋಡಿ`,
+      step_photo: '📸 *ಹಂತ 1/4: ಫೋಟೋ*\n\nದಯವಿಟ್ಟು ನಿಮ್ಮ ಉತ್ಪನ್ನದ ಸ್ಪಷ್ಟ ಫೋಟೋ ಕಳಿಸಿ.\n\n_ರದ್ದು ಮಾಡಲು 0 ಒತ್ತಿರಿ_',
+      listing_started: '📸 *ಪಟ್ಟಿ ಪ್ರಾರಂಭವಾಗಿದೆ!*\n\n✅ ಫೋಟೋ ಸ್ವೀಕರಿಸಲಾಗಿದೆ.',
+      step_produce: '📦 *ಹಂತ 2/4:* ನೀವು ಏನು ಮಾರಾಟ ಮಾಡುತ್ತಿದ್ದೀರಿ?\n\n1️⃣ ಟೊಮೆಟೊ 🍅\n2️⃣ ಈರುಳ್ಳಿ 🧅\n3️⃣ ಆಲೂಗಡ್ಡೆ 🥔\n4️⃣ ಹಸಿ ಮೆಣಸಿನಕಾಯಿ 🌶️\n5️⃣ ದ್ರಾಕ್ಷಿ 🍇\n\n_ಅಥವಾ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ_',
+      step_weight: (prod) => `✅ *${prod}* ಗುರುತಿಸಲಾಗಿದೆ!\n\n⚖️ *ಹಂತ 3/4:* ಒಟ್ಟು ತೂಕವನ್ನು ಕೆಜಿಯಲ್ಲಿ ಕಳಿಸಿ.\nಉದಾಹರಣೆ: 500`,
+      step_price: (kg) => `✅ *${kg}kg* ಗುರುತಿಸಲಾಗಿದೆ!\n\n💰 *ಹಂತ 4/4:* ಕನಿಷ್ಠ ಬೆಲೆ ಎಷ್ಟು? (ಒಂದು ಕೆಜಿಗೆ)\nಉದಾಹರಣೆ: 40`,
+      step_harvest: '✅ *ಬೆಲೆ ಗುರುತಿಸಲಾಗಿದೆ!*\n\n🗓️ ಇದು ಯಾವಾಗ ಸಿದ್ಧವಾಗುತ್ತದೆ?\n\n1️⃣ ನಾಳೆ\n2️⃣ 3 ದಿನಗಳಲ್ಲಿ\n3️⃣ 1 ವಾರದಲ್ಲಿ\n4️⃣ 2 ವಾರಗಳಲ್ಲಿ',
+      listing_live: (id, name, qty, price) => `🎉 *ಅಭಿನಂದನೆಗಳು! ನಿಮ್ಮ ಪಟ್ಟಿ ಸಕ್ರಿಯವಾಗಿದೆ!*\n\n🔹 *ID:* ${id}\n🔹 *ವಸ್ತು:* ${name}\n🔹 *ತೂಕ:* ${qty}kg\n🔹 *ಕನಿಷ್ಠ ಬೆಲೆ:* ₹${price}/kg\n\n🚀 ಖರೀದಿದಾರರಿಗೆ ತಿಳಿಸಲಾಗಿದೆ!`,
+      cancel_back: '🏠 *ಮುಖ್ಯ ಮೆನುಗೆ ಹಿಂತಿರುಗಲಾಗಿದೆ*',
+      no_active: '📭 ನಿಮ್ಮ ಬಳಿ ಸದ್ಯಕ್ಕೆ ಯಾವುದೇ ಸಕ್ರಿಯ ಪಟ್ಟಿಗಳಿಲ್ಲ.',
+      trust_score: (score) => `📊 ನಿಮ್ಮ ವಿಶ್ವಾಸಾರ್ಹತೆ ಸ್ಕೋರ್ *${score}/100* ಆಗಿದೆ.`,
+      invalid_price: '⚠️ ಬೆಲೆಯನ್ನು ಸಂಖ್ಯೆಯಲ್ಲಿ ಕಳಿಸಿ (ಉದಾ: 40).',
+      invalid_weight: '⚠️ ತೂಕವನ್ನು ಸಂಖ್ಯೆಯಲ್ಲಿ ಕಳಿಸಿ (ಉದಾ: 100).',
+      invalid_name: '⚠️ 1-5 ಆಯ್ಕೆ ಮಾಡಿ ಅಥವಾ ಹೆಸರನ್ನು ಟೈಪ್ ಮಾಡಿ.',
+      notify_bid: (amt, qty, city) => `🔔 ಹೊಸ ಬಿಡ್ ಬಂದಿದೆ!\n\n${city || 'ಖರೀದಿದಾರ'}ರಿಂದ ಬಿಡ್:\n${qty}kg @ ₹${amt}/kg\nಒಟ್ಟು: ₹${amt * qty}\n\nಈ ಒಪ್ಪಂದವನ್ನು ಖಚಿತಪಡಿಸಲು *ACCEPT* ಎಂದು ಉತ್ತರಿಸಿ.`,
+      notify_locked: (id) => `✅ ಖರೀದಿ ಖಚಿತವಾಗಿದೆ!\n\nಪಟ್ಟಿ ಸಂಖ್ಯೆ: ${id}\nದಯವಿಟ್ಟು ನಿಮ್ಮ ಉತ್ಪನ್ನವನ್ನು ಪ್ಯಾಕ್ ಮಾಡಿ ಸಿದ್ಧವಾಗಿಡಿ.\nನಮ್ಮ ಡೆಲಿವರಿ ಪಾಲುದಾರರು 24 ಗಂಟೆಯೊಳಗೆ ನಿಮ್ಮನ್ನು ಸಂಪರ್ಕಿಸುತ್ತಾರೆ.`,
+      notify_payment: (amt) => `💰 ಹಣ ಪಾವತಿಸಲಾಗಿದೆ!\n\nಮೊತ್ತ: ₹${amt}\nಫಾರ್ಮ್ ಬಿಡ್ ಬಳಸಿದ್ದಕ್ಕಾಗಿ ಧನ್ಯವಾದಗಳು!`,
+      notify_dispute: (id, reason) => `⚠️ ವಿವಾದ ಉಂಟಾಗಿದೆ\n\nಪಟ್ಟಿ ಸಂಖ್ಯೆ: ${id}\nಕಾರಣ: ${reason}\nನಮ್ಮ ತಂಡವು ಶೀಘ್ರದಲ್ಲೇ ನಿಮ್ಮನ್ನು ಸಂಪರ್ಕಿಸುತ್ತದೆ.`,
+      notify_expired: (id) => `⏰ ಅವಧಿ ಮುಗಿದಿದೆ\n\nನಿಮ್ಮ ಪಟ್ಟಿ ${id} ಯಾವುದೇ ಬಿಡ್ ಇಲ್ಲದೆ ಅವಧಿ ಮುಗಿದಿದೆ. ಕಡಿಮೆ ಬೆಲೆಗೆ ಮರು ಪಟ್ಟಿ ಮಾಡಲು 1 ಒತ್ತಿರಿ.`,
+      upi_fail: '❌ UPI ಪರಿಶೀಲನೆ ವಿಫಲವಾಗಿದೆ. ದಯವಿಟ್ಟು ಸರಿಯಾದ ID ಕಳಿಸಿ ಅಥವಾ SKIP ಒತ್ತಿರಿ.',
+      invalid_upi: '⚠️ ತಪ್ಪು ಮಾಹಿತಿ. ದಯವಿಟ್ಟು ನಿಮ್ಮ UPI ID ಕಳಿಸಿ (ಉದಾ: name@upi) ಅಥವಾ SKIP ಒತ್ತಿರಿ.'
+    }
+  };
+
+  const res = strings[lang][key];
+  if (typeof res === 'function') return res(...Object.values(data));
+  return res || strings.en[key] || key;
+};
 
 // Client state
 let client = null;
@@ -431,7 +481,8 @@ const getOrCreateFarmer = async (phone) => {
       aadhaar: null,
       upiId: null,
       trustScore: trustScore,
-      state: dbName ? 4 : 0, // Direct to main menu if recognized!
+      language: 'en', // Default to English initially
+      state: dbName ? 4 : -1, // Direct to main menu if recognized, else language select
       listingStep: null,
       tempListing: { images: [] },
       registeredAt: null,
@@ -476,6 +527,16 @@ const handleFarmerMessage = async (msg) => {
 
   const body = msg.body?.trim() || '';
   const lower = body.toLowerCase();
+
+  // GLOBAL: Reply 0 to go back to main menu anytime
+  if (lower === '0' && farmer && (farmer.state > 4 || farmer.listingStep)) {
+    farmer.state = 4;
+    farmer.listingStep = null;
+    farmer.tempListing = { images: [] };
+    await msg.reply(t('cancel_back', farmer.language) + '\n\n' + t('menu', farmer.language, { name: farmer.name }));
+    return;
+  }
+
   let reply = null;
 
   const sendReply = async (content) => {
@@ -514,16 +575,43 @@ const handleFarmerMessage = async (msg) => {
     farmer.state = nextState;
   };
 
+  // Language Selection
+  if (farmer.state === -1) {
+    if (lower === '1') {
+      farmer.language = 'en';
+      transitionState(0);
+      reply = `Welcome to FARM BID, ${farmer.name}! Are you a farmer?\n\nReply *YES* to register.`;
+      await sendReply(reply);
+    } else if (lower === '2' || lower.includes('kannada') || lower.includes('ಕನ್ನಡ')) {
+      farmer.language = 'kn';
+      transitionState(0);
+      reply = `ಫಾರ್ಮ್ ಬಿಡ್ (FARM BID) ಗೆ ಸ್ವಾಗತ, ${farmer.name}! ನೀವು ರೈತರೇ?\n\nನೋಂದಾಯಿಸಲು *YES* ಎಂದು ಉತ್ತರಿಸಿ.`;
+      await sendReply(reply);
+    } else {
+      reply = "Welcome to FarmBid! Please select your language:\n\n1️⃣ English\n2️⃣ Kannada (ಕನ್ನಡ)\n\n_Reply 1 or 2_";
+      await sendReply(reply);
+    }
+    return;
+  }
+
   // State machine for farmer registration and listing creation
   if (farmer.state === 0) {
     if (lower === 'yes' || lower === 'y' || lower === 'yes, i am a farmer') {
       transitionState(3); // SKIP Aadhaar & OTP straight to UPI Check
       farmer.listingStep = null;
-      reply = `Thank you, ${farmer.name}! Please send your UPI ID for payments (or type SKIP to add later).`;
+      if (farmer.language === 'kn') {
+        reply = `ಧನ್ಯವಾದಗಳು, ${farmer.name}! ದಯವಿಟ್ಟು ಹಣ ಪಾವತಿಗಾಗಿ ನಿಮ್ಮ UPI ID ಕಳುಹಿಸಿ (ಅಥವಾ ನಂತರ ಸೇರಿಸಲು SKIP ಎಂದು ಟೈಪ್ ಮಾಡಿ).`;
+      } else {
+        reply = `Thank you, ${farmer.name}! Please send your UPI ID for payments (or type SKIP to add later).`;
+      }
       await sendReply(reply);
       return;
     } else {
-      reply = `Welcome to FARM BID, ${farmer.name}! Are you a farmer?\n\nReply YES to register.`;
+      if (farmer.language === 'kn') {
+        reply = `ಫಾರ್ಮ್ ಬಿಡ್ ಗೆ ಸ್ವಾಗತ, ${farmer.name}! ನೀವು ರೈತರೇ?\n\nನೋಂದಾಯಿಸಲು *YES* ಎಂದು ಉತ್ತರಿಸಿ.`;
+      } else {
+        reply = `Welcome to FARM BID, ${farmer.name}! Are you a farmer?\n\nReply *YES* to register.`;
+      }
       await sendReply(reply);
       return;
     }
@@ -538,7 +626,7 @@ const handleFarmerMessage = async (msg) => {
         if (result.success) {
           farmer.upiId = body;
         } else {
-          reply = '❌ UPI verification failed. Please check and retry or type SKIP.';
+          reply = t('upi_fail', farmer.language);
           await sendReply(reply);
           return;
         }
@@ -550,21 +638,34 @@ const handleFarmerMessage = async (msg) => {
       transitionState(4);
       farmer.listingStep = null;
       farmer.tempListing.images = [];
-      reply = `Registration complete, ${farmer.name}!\n\nWhat would you like to do?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score\n\nReply with 1, 2, or 3`;
+      reply = t('reg_complete', farmer.language, { name: farmer.name });
       await sendReply(reply);
     } else {
-      reply = '⚠️  Invalid format. Please send your UPI ID (like yourname@upi) or type SKIP.';
+      reply = t('invalid_upi', farmer.language);
       await sendReply(reply);
     }
     return;
   }
 
   if (farmer.state === 4) {
-    if (lower === '1' || lower === 'create new listing') {
+    if (lower === '1' || lower === 'create new listing' || msg.hasMedia) {
       transitionState(5);
       farmer.listingStep = 'awaiting_photo';
       farmer.tempListing = { images: [] };
-      reply = '📸 Please send a clear photo of your produce.';
+      
+      if (msg.hasMedia) {
+        try {
+          const photoPath = await saveMedia(msg, phone);
+          farmer.tempListing.images.push(photoPath);
+          reply = t('listing_started', farmer.language) + '\n\n' + t('step_produce', farmer.language);
+          farmer.listingStep = 'awaiting_produce_name';
+        } catch (err) {
+          reply = '❌ Error saving photo.';
+          transitionState(4);
+        }
+      } else {
+        reply = t('step_photo', farmer.language);
+      }
       await sendReply(reply);
       return;
     }
@@ -575,30 +676,37 @@ const handleFarmerMessage = async (msg) => {
       );
 
       if (activeListings.length === 0) {
-        reply = '📭 You have no active listings right now.';
+        reply = t('no_active', farmer.language);
       } else {
         const summary = activeListings
           .map(
-            (listing) => `ID: ${listing.listingId}\nProduce: ${listing.produce}\nWeight: ${listing.quantity}kg\nMin price: ₹${listing.minPricePerKg}/kg\nStatus: ${listing.status}\nAuction closes: ${new Date(listing.auctionEndsAt).toLocaleString()}`
+            (listing) => `🆔 *${listing.listingId}*\n📦 ${listing.produce}\n⚖️ ${listing.quantity}kg\n💰 ₹${listing.minPricePerKg}/kg`
           )
-          .join('\n\n');
-        reply = `📋 Your active listings:\n\n${summary}`;
+          .join('\n\n---\n\n');
+        reply = `📋 *${farmer.language === 'kn' ? 'ಸಕ್ರಿಯ ಪಟ್ಟಿಗಳು' : 'Active Listings'}*\n\n${summary}`;
       }
       await sendReply(reply);
-      reply = 'What would you like to do next?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score';
+      reply = t('menu', farmer.language, { name: farmer.name });
       await sendReply(reply);
       return;
     }
 
     if (lower === '3' || lower === 'view my trust score') {
-      reply = `📊 Your trust score is ${farmer.trustScore}/100.`;
+      reply = t('trust_score', farmer.language, { score: farmer.trustScore });
       await sendReply(reply);
-      reply = 'What would you like to do next?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score';
+      reply = t('menu', farmer.language, { name: farmer.name });
       await sendReply(reply);
       return;
     }
 
-    reply = `❓ Sorry, I did not understand that.\n\n${farmer.name}, what would you like to do?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score`;
+    if (lower === '4' || lower.includes('language') || lower.includes('ಭಾಷೆ')) {
+      transitionState(-1);
+      reply = "Select Language / ಭಾಷೆಯನ್ನು ಆರಿಸಿ:\n\n1️⃣ English\n2️⃣ Kannada (ಕನ್ನಡ)";
+      await sendReply(reply);
+      return;
+    }
+
+    reply = t('menu', farmer.language, { name: farmer.name });
     await sendReply(reply);
     return;
   }
@@ -625,24 +733,34 @@ const handleFarmerMessage = async (msg) => {
     }
 
     if (step === 'awaiting_produce_name') {
-      // Allow accepting MULTIPLE photos even if state advanced here!
       if (msg.hasMedia) {
         try {
           const photoPath = await saveMedia(msg, phone);
           farmer.tempListing.images.push(photoPath);
-          reply = `✅ Extra photo added (${farmer.tempListing.images.length} total).\n\nWhat is the name of your produce? (e.g. Tomatoes, Chilies)`;
+          reply = `✅ Extra photo added (${farmer.tempListing.images.length} total).\n\n` + t('step_produce', farmer.language);
           await sendReply(reply);
           return;
         } catch (err) {}
       }
 
-      // Must be at least 2 chars and NOT an empty caption from media
-      if (body.trim().length >= 2 && !msg.hasMedia) {
+      const crops = {
+        '1': farmer.language === 'kn' ? 'ಟೊಮೆಟೊ 🍅' : 'Tomatoes 🍅',
+        '2': farmer.language === 'kn' ? 'ಈರುಳ್ಳಿ 🧅' : 'Onions 🧅',
+        '3': farmer.language === 'kn' ? 'ಆಲೂಗಡ್ಡೆ 🥔' : 'Potatoes 🥔',
+        '4': farmer.language === 'kn' ? 'ಹಸಿ ಮೆಣಸಿನಕಾಯಿ 🌶️' : 'Green Chilies 🌶️',
+        '5': farmer.language === 'kn' ? 'ದ್ರಾಕ್ಷಿ 🍇' : 'Grapes 🍇'
+      };
+
+      if (crops[body]) {
+        farmer.tempListing.produce = crops[body];
+        reply = t('step_weight', farmer.language, { prod: crops[body] });
+        farmer.listingStep = 'awaiting_weight';
+      } else if (body.trim().length >= 2 && !msg.hasMedia) {
         farmer.tempListing.produce = body.trim();
-        reply = `✅ Produce name noted (${farmer.tempListing.produce})! Now send the total weight in kg. Example: 100`;
+        reply = t('step_weight', farmer.language, { prod: farmer.tempListing.produce });
         farmer.listingStep = 'awaiting_weight';
       } else if (!msg.hasMedia) {
-        reply = '⚠️ Please enter a valid produce name (e.g. Tomatoes).';
+        reply = t('invalid_name', farmer.language);
       }
       if (reply) await sendReply(reply);
       return;
@@ -652,9 +770,9 @@ const handleFarmerMessage = async (msg) => {
       if (/^\d+(\.\d+)?$/.test(body)) {
         farmer.tempListing.weight = parseFloat(body);
         farmer.listingStep = 'awaiting_min_price';
-        reply = '✅ Weight noted! What is your minimum price per kg in rupees? Example: 40';
+        reply = t('step_price', farmer.language, { kg: body });
       } else {
-        reply = '⚠️  Weight must be a number. Please send the weight in kg. Example: 100';
+        reply = t('invalid_weight', farmer.language);
       }
       await sendReply(reply);
       return;
@@ -664,10 +782,10 @@ const handleFarmerMessage = async (msg) => {
       if (/^\d+(\.\d+)?$/.test(body)) {
         farmer.tempListing.minPrice = parseFloat(body);
         farmer.listingStep = 'awaiting_harvest_date';
-        reply = '✅ Price noted! When will the produce be ready?\n\n1️⃣ Tomorrow\n2️⃣ In 3 days\n3️⃣ In 1 week\n4️⃣ In 2 weeks\n5️⃣ In 1 month\n\nReply with 1, 2, 3, 4, or 5';
+        reply = t('step_harvest', farmer.language);
         await sendReply(reply);
       } else {
-        reply = '⚠️  Price must be a number. Please send your minimum price per kg in rupees.';
+        reply = t('invalid_price', farmer.language);
         await sendReply(reply);
       }
       return;
@@ -722,7 +840,10 @@ const completeListingCreation = async (phone, farmer) => {
     console.log('[WhatsApp] Listing created:', listingResult);
 
     // Save to MongoDB if models are available
-    if (FarmerModel && Listing) {
+    const isDbConnected = mongoose.connection && mongoose.connection.readyState === 1;
+    
+    if (isDbConnected && FarmerModel && Listing) {
+      console.log('[WhatsApp] DB is connected, saving listing to MongoDB...');
       let dbFarmer = await FarmerModel.findOne({ phone });
       if (!dbFarmer) {
         const phoneDigits = phone.replace(/[^0-9]/g, '');
@@ -777,12 +898,14 @@ const completeListingCreation = async (phone, farmer) => {
       await dbListing.save();
       dbFarmer.totalListings = (dbFarmer.totalListings || 0) + 1;
       await dbFarmer.save();
-
       console.log('[WhatsApp] Listing saved to MongoDB:', dbListing._id);
+    } else {
+      console.log('[WhatsApp] Database not connected or missing models. Saving to memory store only.');
     }
 
-    // Store in local memory store only if DB save didn't happen
+    // Always store in local memory store for immediate visibility and fallback
     const newListing = {
+      id: listingResult.listingId || `l-${Date.now()}`,
       listingId: listingResult.listingId || `l-${Date.now()}`,
       farmerPhone: phone,
       farmerName: farmer.name || 'WhatsApp Farmer',
@@ -803,9 +926,7 @@ const completeListingCreation = async (phone, farmer) => {
       createdAt: new Date().toISOString()
     };
 
-    if (!FarmerModel || !Listing) {
-      listingStore.set(newListing.listingId, newListing);
-    }
+    listingStore.set(newListing.listingId, newListing);
 
     // Reset farmer state
     farmer.totalListings += 1;
@@ -813,7 +934,12 @@ const completeListingCreation = async (phone, farmer) => {
     farmer.listingStep = null;
     farmer.tempListing = { images: [] };
 
-    reply = `🎉 Your listing is LIVE!\n\nListing ID: ${newListing.listingId}\nProduce: ${newListing.produce}\nWeight: ${newListing.quantity}kg\nMin price: ₹${newListing.minPricePerKg}/kg\nAuction closes: ${new Date(newListing.auctionClosesAt).toLocaleString()}\n\nBuyers can now bid! We will notify you of all bids.`;
+    reply = t('listing_live', farmer.language, {
+      id: newListing.listingId,
+      name: newListing.produce,
+      qty: newListing.quantity,
+      price: newListing.minPricePerKg
+    });
 
   } catch (err) {
     console.error('[WhatsApp] Failed to create listing:', err);
@@ -833,28 +959,32 @@ const completeListingCreation = async (phone, farmer) => {
 
 // Notification functions (called from other parts of the app)
 const notifyFarmerNewBid = async (farmerPhone, bidAmount, quantity, buyerCity) => {
-  const total = bidAmount * quantity;
-  const message = `🔔 NEW BID on your listing!\n\nBuyer from ${buyerCity || 'your area'} bids:\n${quantity}kg @ ₹${bidAmount}/kg\nTotal: ₹${total}\n\nReply ACCEPT to lock this deal, or wait for higher bids.`;
+  const farmer = farmerStore.get(farmerPhone) || { language: 'en' };
+  const message = t('notify_bid', farmer.language, { amt: bidAmount, qty: quantity, city: buyerCity });
   return sendMessage({ to: farmerPhone, body: message });
 };
 
 const notifyFarmerDealLocked = async (farmerPhone, listingId, buyerDetails) => {
-  const message = `✅ DEAL LOCKED!\n\nListing ID: ${listingId}\nBuyer: ${buyerDetails || 'Confirmed'}\n\nPlease prepare your produce for pickup.\nOur delivery partner will contact you within 24 hours.\n\nPlease upload a photo of your packed produce when ready.`;
+  const farmer = farmerStore.get(farmerPhone) || { language: 'en' };
+  const message = t('notify_locked', farmer.language, { id: listingId });
   return sendMessage({ to: farmerPhone, body: message });
 };
 
 const notifyFarmerPaymentSent = async (farmerPhone, amount, upiId) => {
-  const message = `💰 PAYMENT SENT!\n\nAmount: ₹${amount}\nUPI ID: ${upiId}\n\nThank you for using FARM BID!`;
+  const farmer = farmerStore.get(farmerPhone) || { language: 'en' };
+  const message = t('notify_payment', farmer.language, { amt: amount });
   return sendMessage({ to: farmerPhone, body: message });
 };
 
 const notifyFarmerDispute = async (farmerPhone, listingId, reason) => {
-  const message = `⚠️  DISPUTE RAISED\n\nListing ID: ${listingId}\nReason: ${reason}\n\nOur team will contact you within 2 hours to resolve this.`;
+  const farmer = farmerStore.get(farmerPhone) || { language: 'en' };
+  const message = t('notify_dispute', farmer.language, { id: listingId, reason });
   return sendMessage({ to: farmerPhone, body: message });
 };
 
 const notifyFarmerListingExpired = async (farmerPhone, listingId) => {
-  const message = `⏰ LISTING EXPIRED\n\nYour listing ${listingId} has expired with no bids.\nReply 1 to relist at a lower price.`;
+  const farmer = farmerStore.get(farmerPhone) || { language: 'en' };
+  const message = t('notify_expired', farmer.language, { id: listingId });
   return sendMessage({ to: farmerPhone, body: message });
 };
 

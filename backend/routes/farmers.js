@@ -6,10 +6,11 @@ const Listing = require('../models/Listing');
 // GET /api/farmers - Get all farmers
 router.get('/', async (req, res, next) => {
   try {
-    const farmers = await Farmer.find()
+    const farmersResult = await Farmer.find()
       .sort({ trustScore: -1 })
-      .lean()
-      .map(f => ({ id: f._id, ...f }));
+      .lean();
+    
+    const farmers = farmersResult.map(f => ({ id: f._id, ...f }));
 
     res.json({
       success: true,
@@ -31,10 +32,11 @@ router.get('/:id', async (req, res, next) => {
       });
     }
 
-    const listings = await Listing.find({ farmerId: farmer._id })
+    const listingsResult = await Listing.find({ farmerId: farmer._id })
       .sort({ createdAt: -1 })
-      .lean()
-      .map(l => ({ id: l._id, ...l }));
+      .lean();
+    
+    const listings = listingsResult.map(l => ({ id: l._id, ...l }));
 
     res.json({
       success: true,

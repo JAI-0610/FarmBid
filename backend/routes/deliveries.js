@@ -12,10 +12,11 @@ router.get('/', async (req, res, next) => {
     if (status) query.status = status;
     if (auctionId) query.auctionId = auctionId;
 
-    const deliveries = await Delivery.find(query)
+    const deliveriesResult = await Delivery.find(query)
       .sort({ pickupTime: -1 })
-      .lean()
-      .map(d => ({ id: d._id, ...d }));
+      .lean();
+    
+    const deliveries = deliveriesResult.map(d => ({ id: d._id, ...d }));
 
     res.json({
       success: true,
