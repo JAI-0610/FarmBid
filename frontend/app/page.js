@@ -185,7 +185,7 @@ const AuctionCard = ({ listing, onBid }) => {
       animate={{ opacity: 1, y: 0 }}
       className="auction-card-glow"
     >
-      <Card className="overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50">
+      <Card className={`overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50 ${listing.isUpdating ? 'border-primary ring-2 ring-primary/50 animate-pulse' : ''}`}>
         <div className="relative">
           <img
             src={listing.images?.[0] || 'https://images.pexels.com/photos/15279908/pexels-photo-15279908.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940'}
@@ -611,30 +611,53 @@ export default function App() {
   const [whatsappLanguage, setWhatsappLanguage] = useState('english')
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState('all')
+  const [topupAmount, setTopupAmount] = useState('')
+  const [topupLoading, setTopupLoading] = useState(false)
   
   // Authentication state
   const [currentUser, setCurrentUser] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
+  // Track listings that are currently updating (price changed)
+  const [updatingListingIds, setUpdatingListingIds] = useState(new Set())
+
   // Check authentication on mount
   useEffect(() => {
-    const checkAuth = () => {
+    const checkAuth = async () => {
       const token = localStorage.getItem('farmbid_token')
       const userData = localStorage.getItem('farmbid_user')
-      
+
       if (token && userData) {
         try {
-          const user = JSON.parse(userData)
-          setCurrentUser(user)
-          setIsAuthenticated(true)
-          setWalletBalance(user.walletBalance || 50000)
+          // Verify token with server
+          const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+          const response = await fetch(`${API_URL}/auth/verify-token`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.authenticated) {
+            const user = data.user;
+            setCurrentUser(user);
+            setIsAuthenticated(true);
+            setWalletBalance(user.walletBalance || 50000);
+          } else {
+            // Token invalid or expired
+            console.error('Auth verification failed:', data.error);
+            handleLogout();
+          }
         } catch (e) {
-          console.error('Error parsing user data:', e)
-          handleLogout()
+          console.error('Error during auth verification:', e);
+          handleLogout();
         }
       }
-    }
-    checkAuth()
+    };
+    checkAuth();
   }, [])
 
   // Handle logout
@@ -651,14 +674,19 @@ export default function App() {
     const fetchData = async () => {
       try {
         const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
-        const [listingsRes, eventsRes] = await Promise.all([
+        const [listingsRes, eventsRes, walletRes] = await Promise.all([
           fetch(`${API_URL}/listings?status=all`),
-          fetch(`${API_URL}/blockchain/events`)
+          fetch(`${API_URL}/blockchain/events`),
+          fetch(`${API_URL}/wallet/balance?buyerId=${currentUser?.id || 'b1'}`)
         ])
         const listingsData = await listingsRes.json()
         const eventsData = await eventsRes.json()
+        const walletData = await walletRes.json()
         setListings(listingsData.listings || [])
         setBlockchainEvents(eventsData.events || [])
+        if (walletData.success) {
+          setWalletBalance(walletData.available)
+        }
       } catch (error) {
         console.error('Error fetching data:', error)
       } finally {
@@ -666,7 +694,62 @@ export default function App() {
       }
     }
     fetchData()
-  }, [])
+  }, [currentUser?.id])
+
+  // Polling for realtime listings updates
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    console.log('[Realtime] Starting bid polling interval');
+    const pollInterval = setInterval(async () => {
+      try {
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+        const res = await fetch(`${API_URL}/listings?status=all&t=${Date.now()}`);
+        const data = await res.json();
+
+        if (data.success && data.listings) {
+          setListings(prevListings => {
+            const newListings = data.listings;
+            const updated = newListings.map(newListing => {
+              const oldListing = prevListings.find(l => String(l.id) === String(newListing.id));
+              
+              if (oldListing) {
+                const oldPrice = Number(oldListing.currentBidPerKg);
+                const newPrice = Number(newListing.currentBidPerKg);
+                
+                if (oldPrice !== newPrice) {
+                  console.log(`[Realtime] Bid update detected for ${newListing.produce}: ₹${oldPrice} -> ₹${newPrice}`);
+                  
+                  // Mark as updating for visual feedback
+                  setUpdatingListingIds(prev => new Set(prev).add(newListing.id));
+                  
+                  // Remove updating flag after 2 seconds
+                  setTimeout(() => {
+                    setUpdatingListingIds(prev => {
+                      const newSet = new Set(prev);
+                      newSet.delete(newListing.id);
+                      return newSet;
+                    });
+                  }, 2000);
+                  
+                  return { ...newListing, isUpdating: true };
+                }
+              }
+              return newListing;
+            });
+            return updated;
+          });
+        }
+      } catch (error) {
+        console.error('[Realtime] Polling error:', error);
+      }
+    }, 4000); // Poll every 4 seconds
+
+    return () => {
+      console.log('[Realtime] Stopping bid polling interval');
+      clearInterval(pollInterval);
+    };
+  }, [isAuthenticated]);
 
   // Toggle dark mode
   useEffect(() => {
@@ -680,13 +763,28 @@ export default function App() {
 
   const handleSubmitBid = async (listingId, bidAmount) => {
     try {
+      if (!isAuthenticated || !currentUser) {
+        toast.error('Please login to place a bid');
+        router.push('/login');
+        return;
+      }
+
+      if (currentUser.role !== 'buyer') {
+        toast.error('Only buyers can place bids');
+        return;
+      }
+
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const token = localStorage.getItem('farmbid_token');
       const response = await fetch(`${API_URL}/bids`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           listingId,
-          buyerId: 'b1',
+          buyerId: currentUser.id,
           bidPerKg: bidAmount
         })
       })
@@ -695,12 +793,19 @@ export default function App() {
         toast.success('Bid placed successfully!', {
           description: `Your bid of ${formatINR(bidAmount)}/kg has been anchored to blockchain.`
         })
+        console.log(`[BidSubmit] Success! Updating listing ${listingId} locally to ₹${bidAmount}`);
         // Update listings
-        setListings(prev => prev.map(l =>
-          l.id === listingId
-            ? { ...l, currentBidPerKg: bidAmount, totalBids: l.totalBids + 1 }
-            : l
-        ))
+        setListings(prev => {
+          const matched = prev.find(l => String(l.id) === String(listingId));
+          if (!matched) {
+            console.warn(`[BidSubmit] Warning: Could not find listing ${listingId} in local state to update UI!`);
+          }
+          return prev.map(l =>
+            String(l.id) === String(listingId)
+              ? { ...l, currentBidPerKg: bidAmount, totalBids: (Number(l.totalBids) || 0) + 1, isUpdating: true }
+              : l
+          );
+        });
         // Add blockchain event
         if (data.blockchainEvent) {
           setBlockchainEvents(prev => [data.blockchainEvent, ...prev])
@@ -708,6 +813,122 @@ export default function App() {
       }
     } catch (error) {
       toast.error('Failed to place bid')
+    }
+  }
+
+  const handleTopup = async () => {
+    if (!isAuthenticated || !currentUser) {
+      toast.error('Please login to top up wallet');
+      router.push('/login');
+      return;
+    }
+
+    if (!topupAmount || isNaN(topupAmount) || parseFloat(topupAmount) <= 0) {
+      toast.error('Please enter a valid amount')
+      return
+    }
+
+    setTopupLoading(true)
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const token = localStorage.getItem('farmbid_token');
+      const response = await fetch(`${API_URL}/wallet/topup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: currentUser.id,
+          amount: parseFloat(topupAmount),
+          paymentMethod: 'upi'
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        setWalletBalance(data.newBalance)
+        setTopupAmount('')
+        toast.success('Wallet topped up successfully!', {
+          description: `₹${topupAmount} has been added to your wallet.`
+        })
+      } else {
+        toast.error(data.error || 'Topup failed')
+      }
+    } catch (error) {
+      toast.error('Connection error')
+    } finally {
+      setTopupLoading(false)
+    }
+  }
+
+  const handleEscrowLock = async (orderId, farmerAddress, amount) => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const response = await fetch(`${API_URL}/escrow/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId, farmerAddress, amountMATIC: amount })
+      })
+      const data = await response.json()
+      if (data.success) {
+        toast.success('Funds locked in Escrow!', {
+          description: `Transaction: ${data.txHash.substring(0, 10)}...`
+        })
+      } else {
+        toast.error(data.error || 'Escrow failed')
+      }
+    } catch (error) {
+      toast.error('Connection error')
+    }
+  }
+
+  const handleEscrowRelease = async (orderId) => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const response = await fetch(`${API_URL}/escrow/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          orderId, 
+          secret: process.env.NEXT_PUBLIC_WEBHOOK_SECRET || 'your_random_secret_string' 
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        toast.success('Funds released to farmer!', {
+          description: `Transaction: ${data.txHash.substring(0, 10)}...`
+        })
+      } else {
+        toast.error(data.error || 'Release failed')
+      }
+    } catch (error) {
+      toast.error('Connection error')
+    }
+  }
+
+  const handleEscrowPenalize = async (orderId, type, reason) => {
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const endpoint = type === 'farmer' ? 'penalize-farmer' : 'penalize-buyer';
+      const response = await fetch(`${API_URL}/escrow/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          orderId, 
+          reason,
+          secret: process.env.NEXT_PUBLIC_WEBHOOK_SECRET || 'your_random_secret_string' 
+        })
+      })
+      const data = await response.json()
+      if (data.success) {
+        toast.success(`Escrow penalized (${type})!`, {
+          description: `Transaction: ${data.txHash.substring(0, 10)}...`
+        })
+      } else {
+        toast.error(data.error || 'Penalization failed')
+      }
+    } catch (error) {
+      toast.error('Connection error')
     }
   }
 
@@ -1446,7 +1667,16 @@ export default function App() {
                                 <p className="text-sm text-muted-foreground">Suspicious patterns detected</p>
                               </div>
                             </div>
-                            <Button size="sm" variant="destructive">Investigate</Button>
+                            <div className="flex gap-2">
+                              <Button 
+                                size="sm" 
+                                variant="destructive"
+                                onClick={() => handleEscrowPenalize('KOL-2025-0628', 'farmer', 'Fraud detected')}
+                              >
+                                Penalize Farmer
+                              </Button>
+                              <Button size="sm" variant="outline">Investigate</Button>
+                            </div>
                           </div>
                         </div>
                       </CardContent>
@@ -1495,18 +1725,32 @@ export default function App() {
                       <CardContent className="space-y-4">
                         <div className="grid grid-cols-3 gap-2">
                           {[5000, 10000, 25000].map(amount => (
-                            <Button key={amount} variant="outline" className="text-lg">
+                            <Button 
+                              key={amount} 
+                              variant="outline" 
+                              className="text-lg"
+                              onClick={() => setTopupAmount(amount.toString())}
+                            >
                               +{formatINR(amount)}
                             </Button>
                           ))}
                         </div>
                         <div className="relative">
                           <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                          <Input placeholder="Enter amount" className="pl-9" />
+                          <Input 
+                            placeholder="Enter amount" 
+                            className="pl-9" 
+                            value={topupAmount}
+                            onChange={(e) => setTopupAmount(e.target.value)}
+                          />
                         </div>
-                        <Button className="w-full">
+                        <Button 
+                          className="w-full" 
+                          onClick={handleTopup}
+                          disabled={topupLoading}
+                        >
                           <CreditCard className="h-4 w-4 mr-2" />
-                          Add via UPI / Card
+                          {topupLoading ? 'Processing...' : 'Add via UPI / Card'}
                         </Button>
                       </CardContent>
                     </Card>
@@ -1574,7 +1818,16 @@ export default function App() {
                                     <p className="text-sm text-muted-foreground">Order #KOL-2025-0628</p>
                                   </div>
                                 </div>
-                                <Badge>Awaiting Pickup</Badge>
+                                <div className="flex gap-2">
+                                  <Button 
+                                    size="sm" 
+                                    variant="outline" 
+                                    onClick={() => handleEscrowLock('KOL-2025-0628', '0x7e...7b8c', 0.05)}
+                                  >
+                                    <Lock className="h-3 w-3 mr-1" /> Lock Escrow
+                                  </Button>
+                                  <Badge>Awaiting Pickup</Badge>
+                                </div>
                               </div>
 
                               <div className="grid grid-cols-4 gap-4 mb-4">
@@ -1677,6 +1930,13 @@ export default function App() {
                             </div>
                             <div className="flex gap-2 mt-4">
                               <Button size="sm">View Details</Button>
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => handleEscrowRelease('BLR-2025-0624')}
+                              >
+                                <CheckCircle2 className="h-3 w-3 mr-1" /> Confirm & Pay
+                              </Button>
                               <Button size="sm" variant="outline">Add Evidence</Button>
                             </div>
                           </div>

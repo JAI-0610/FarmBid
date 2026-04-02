@@ -119,11 +119,13 @@ async function handler(request, { params }) {
 
   try {
     // 1. Handle auth routes locally (no backend needed)
+    /* Disable local auth mock - forwarding to real backend
     if (subPath.startsWith('/auth')) {
       const authResponse = await handleAuth(subPath, request);
       if (authResponse) return authResponse;
       return cors(NextResponse.json({ error: 'Unknown auth route' }, { status: 404 }));
     }
+    */
 
     // 2. Proxy everything else to the backend
     const backendUrl =
@@ -136,6 +138,7 @@ async function handler(request, { params }) {
       method: request.method,
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': request.headers.get('authorization') || '',
       },
     };
 

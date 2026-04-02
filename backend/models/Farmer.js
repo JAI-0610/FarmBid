@@ -10,31 +10,42 @@ const farmerSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  email: {
+    type: String,
+    lowercase: true,
+    unique: true,
+    sparse: true // Allow null/missing values while keeping uniqueness for others
+  },
+  password: {
+    type: String,
+    required: false
+  },
   phone: {
     type: String,
-    required: true
+    required: true,
+    unique: true
   },
   village: {
     type: String,
-    required: true
+    default: 'Not specified'
   },
   district: {
     type: String,
-    required: true
+    default: 'Not specified'
   },
   pincode: {
     type: String,
-    required: true
+    default: '000000'
   },
   landSize: {
     type: String,
-    required: true
+    default: 'Unverified'
   },
   trustScore: {
     type: Number,
     min: 0,
     max: 100,
-    required: true
+    default: 50
   },
   totalListings: {
     type: Number,
@@ -46,7 +57,7 @@ const farmerSchema = new mongoose.Schema({
   },
   joinedDate: {
     type: String,
-    required: true
+    default: () => new Date().toISOString().split('T')[0]
   },
   aadhaarVerified: {
     type: Boolean,
@@ -71,9 +82,19 @@ const farmerSchema = new mongoose.Schema({
   profileImage: {
     type: String,
     default: ''
+  },
+  isDemo: {
+    type: Boolean,
+    default: false
+  },
+  role: {
+    type: String,
+    enum: ['buyer', 'farmer', 'admin'],
+    default: 'farmer'
   }
 }, {
   timestamps: true
 });
 
 module.exports = mongoose.model('Farmer', farmerSchema);
+

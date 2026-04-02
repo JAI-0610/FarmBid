@@ -6,11 +6,13 @@
 
 require('dotenv').config();
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 
 // Import models
 const Farmer = require('./models/Farmer');
 const Buyer = require('./models/Buyer');
+const Admin = require('./models/Admin');
 const Listing = require('./models/Listing');
 const Bid = require('./models/Bid');
 const Auction = require('./models/Auction');
@@ -20,11 +22,17 @@ const BlockchainEvent = require('./models/BlockchainEvent');
 const Wallet = require('./models/Wallet');
 const { anchorToBlockchain } = require('./utils/blockchain');
 
+// Demo account emails from environment
+const DEMO_BUYER_EMAIL = process.env.DEMO_BUYER_EMAIL || 'demo.buyer@farmbid.com';
+const DEMO_FARMER_EMAIL = process.env.DEMO_FARMER_EMAIL || 'demo.farmer@farmbid.com';
+const DEMO_ADMIN_EMAIL = process.env.DEMO_ADMIN_EMAIL || 'demo.admin@farmbid.com';
+
 // Seed data from original frontend
 const seedFarmers = [
   {
     code: 'KA-KOL-001',
     name: 'Ramappa Gowda',
+    email: DEMO_FARMER_EMAIL, // First farmer is the demo farmer
     phone: '+91 98765 43210',
     village: 'Srinivaspur',
     district: 'Kolar',
@@ -39,11 +47,14 @@ const seedFarmers = [
     landVerified: true,
     language: 'Kannada',
     crops: ['Tomatoes', 'Chilies', 'Onions'],
-    profileImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150'
+    profileImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+    isDemo: true,
+    role: 'farmer'
   },
   {
     code: 'KA-KOL-002',
     name: 'Lakshmi Devi',
+    email: 'lakshmi.devi@example.com',
     phone: '+91 87654 32109',
     village: 'Bangarpet',
     district: 'Kolar',
@@ -58,11 +69,14 @@ const seedFarmers = [
     landVerified: true,
     language: 'Kannada',
     crops: ['Tomatoes', 'Grapes'],
-    profileImage: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150'
+    profileImage: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150',
+    isDemo: true,
+    role: 'farmer'
   },
   {
     code: 'KA-KOL-003',
     name: 'Venkatesh Naidu',
+    email: 'venkatesh.naidu@example.com',
     phone: '+91 76543 21098',
     village: 'Mulbagal',
     district: 'Kolar',
@@ -77,11 +91,14 @@ const seedFarmers = [
     landVerified: false,
     language: 'Telugu',
     crops: ['Potatoes', 'Onions'],
-    profileImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150'
+    profileImage: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150',
+    isDemo: true,
+    role: 'farmer'
   },
   {
     code: 'KA-BLR-001',
     name: 'Manjunath Kumar',
+    email: 'manjunath.kumar@example.com',
     phone: '+91 65432 10987',
     village: 'Anekal',
     district: 'Bengaluru Rural',
@@ -96,7 +113,9 @@ const seedFarmers = [
     landVerified: true,
     language: 'Kannada',
     crops: ['Tomatoes', 'Chilies', 'Capsicum'],
-    profileImage: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'
+    profileImage: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150',
+    isDemo: true,
+    role: 'farmer'
   }
 ];
 
@@ -104,7 +123,7 @@ const seedBuyers = [
   {
     code: 'B001',
     name: 'Bengaluru Fresh Foods Pvt Ltd',
-    email: 'procurement@blrfresh.in',
+    email: DEMO_BUYER_EMAIL, // Use demo email
     phone: '+91 80 2345 6789',
     type: 'Retailer',
     location: 'Bengaluru',
@@ -114,7 +133,9 @@ const seedBuyers = [
     trustScore: 98,
     joinedDate: '2024-07-01',
     gstNumber: 'GSTIN001',
-    panNumber: 'PAN001'
+    panNumber: 'PAN001',
+    isDemo: true,
+    role: 'buyer'
   },
   {
     code: 'B002',
@@ -129,7 +150,9 @@ const seedBuyers = [
     trustScore: 92,
     joinedDate: '2024-08-15',
     gstNumber: 'GSTIN002',
-    panNumber: 'PAN002'
+    panNumber: 'PAN002',
+    isDemo: true,
+    role: 'buyer'
   },
   {
     code: 'B003',
@@ -144,7 +167,9 @@ const seedBuyers = [
     trustScore: 100,
     joinedDate: '2024-05-20',
     gstNumber: 'GSTIN003',
-    panNumber: 'PAN003'
+    panNumber: 'PAN003',
+    isDemo: true,
+    role: 'buyer'
   }
 ];
 
@@ -556,6 +581,116 @@ const seedDatabase = async () => {
       const event = new BlockchainEvent(eventData);
       await event.save();
       console.log(`  ✅ ${eventData.type}`);
+    }
+
+    // Create demo users
+    console.log('\n👤 Seeding demo accounts...');
+    // Use email constants defined at top
+    const DEMO_BUYER_PASSWORD = process.env.DEMO_BUYER_PASSWORD || 'demo123';
+    const DEMO_FARMER_PASSWORD = process.env.DEMO_FARMER_PASSWORD || 'demo123';
+    const DEMO_ADMIN_PASSWORD = process.env.DEMO_ADMIN_PASSWORD || 'demo123';
+
+    // Hash demo passwords
+    const salt = await bcrypt.genSalt(10);
+    const hashedDemoBuyerPassword = await bcrypt.hash(DEMO_BUYER_PASSWORD, salt);
+    const hashedDemoFarmerPassword = await bcrypt.hash(DEMO_FARMER_PASSWORD, salt);
+    const hashedDemoAdminPassword = await bcrypt.hash(DEMO_ADMIN_PASSWORD, salt);
+
+    // Create/update demo buyer (Bengaluru Fresh Foods)
+    await Buyer.findOneAndUpdate(
+      { email: DEMO_BUYER_EMAIL.toLowerCase() },
+      {
+        $set: {
+          password: hashedDemoBuyerPassword,
+          isDemo: true,
+          role: 'buyer',
+          walletBalance: 250000,
+          code: 'B001',
+          name: 'Bengaluru Fresh Foods Pvt Ltd',
+          phone: '+91 80 2345 6789',
+          type: 'Retailer',
+          location: 'Bengaluru',
+          totalBids: 156,
+          wonAuctions: 89,
+          trustScore: 98,
+          joinedDate: '2024-07-01',
+          gstNumber: 'GSTIN001',
+          panNumber: 'PAN001'
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log(`  ✅ Demo Buyer: ${DEMO_BUYER_EMAIL} (isDemo: true)`);
+
+    // Create/update demo farmer (Ramappa Gowda)
+    await Farmer.findOneAndUpdate(
+      { email: DEMO_FARMER_EMAIL.toLowerCase() },
+      {
+        $set: {
+          code: 'KA-KOL-001',
+          name: 'Ramappa Gowda',
+          password: hashedDemoFarmerPassword,
+          phone: '+91 98765 43210',
+          village: 'Srinivaspur',
+          district: 'Kolar',
+          pincode: '563135',
+          landSize: '2.5 acres',
+          trustScore: 95,
+          totalListings: 47,
+          successfulSales: 45,
+          joinedDate: '2024-08-15',
+          aadhaarVerified: true,
+          upiVerified: true,
+          landVerified: true,
+          language: 'Kannada',
+          crops: ['Tomatoes', 'Chilies', 'Onions'],
+          profileImage: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
+          isDemo: true,
+          role: 'farmer'
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    console.log(`  ✅ Demo Farmer: ${DEMO_FARMER_EMAIL} (isDemo: true)`);
+
+    // Create/update demo admin
+    try {
+      await Admin.findOneAndUpdate(
+        { email: DEMO_ADMIN_EMAIL.toLowerCase() },
+        {
+          $set: {
+            code: 'ADMIN001',
+            name: 'FarmBid Administrator',
+            password: hashedDemoAdminPassword,
+            phone: '+91 98765 00000',
+            role: 'admin',
+            permissions: ['read', 'write', 'manage_users', 'manage_disputes'],
+            isDemo: true
+          }
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+      console.log(`  ✅ Demo Admin: ${DEMO_ADMIN_EMAIL} (isDemo: true)`);
+    } catch (e) {
+      // If Admin model doesn't exist or there's an error, that's okay
+      console.log(`  ⚠️  Demo Admin could not be created (Admin model may need to be added): ${e.message}`);
+    }
+
+    // Also update wallets for demo users
+    console.log('\n💳 Seeding demo wallets...');
+    const demoBuyerFromDB = await Buyer.findOne({ email: DEMO_BUYER_EMAIL });
+    if (demoBuyerFromDB) {
+      await Wallet.findOneAndUpdate(
+        { userId: demoBuyerFromDB._id.toString(), userType: 'buyer' },
+        {
+          userId: demoBuyerFromDB._id.toString(),
+          userType: 'buyer',
+          balance: 250000,
+          availableBalance: 250000
+        },
+        { upsert: true }
+      );
+      console.log(`  ✅ Demo Buyer wallet: ₹250,000`);
     }
 
     console.log('\n' + '='.repeat(60));

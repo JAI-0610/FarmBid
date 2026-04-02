@@ -16,6 +16,12 @@ const buyerSchema = new mongoose.Schema({
     lowercase: true,
     unique: true
   },
+  password: {
+    type: String,
+    required: function() {
+      return !this.isDemo; // Password required for non-demo users
+    }
+  },
   phone: {
     type: String,
     required: true
@@ -56,6 +62,15 @@ const buyerSchema = new mongoose.Schema({
   },
   panNumber: {
     type: String
+  },
+  isDemo: {
+    type: Boolean,
+    default: false
+  },
+  role: {
+    type: String,
+    enum: ['buyer', 'farmer', 'admin'],
+    default: 'buyer'
   }
 }, {
   timestamps: true

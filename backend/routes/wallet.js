@@ -4,6 +4,7 @@ const Wallet = require('../models/Wallet');
 const WalletTransaction = require('../models/WalletTransaction');
 const { anchorToBlockchain, createBlockchainEvent } = require('../utils/blockchain');
 const { v4: uuidv4 } = require('uuid');
+const { authenticateJWT, authorizeRole } = require('../middleware/auth');
 
 // GET /api/wallet/balance - Get wallet balance for user
 router.get('/balance', async (req, res, next) => {
@@ -34,16 +35,22 @@ router.get('/balance', async (req, res, next) => {
 });
 
 // POST /api/wallet/topup - Top up wallet balance
-router.post('/topup', async (req, res, next) => {
+router.post('/topup', authenticateJWT, authorizeRole('buyer'), async (req, res, next) => {
   try {
+    // Use authenticated user's ID
+    const authUserId = req.user.userId;
     const { userId, userType = 'buyer', amount, paymentMethod = 'upi', referenceId } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({
+    // Verify that if userId is provided, it matches the authenticated user
+    if (userId && userId !== authUserId) {
+      return res.status(403).json({
         success: false,
-        error: 'User ID is required'
+        error: 'Cannot top up another user\'s wallet'
       });
     }
+
+    // Use the authenticated user's ID
+    const finalUserId = authUserId;
 
     if (amount < 100) {
       return res.status(400).json({
@@ -53,10 +60,10 @@ router.post('/topup', async (req, res, next) => {
     }
 
     // Find wallet
-    let wallet = await Wallet.findOne({ userId, userType });
+    let wallet = await Wallet.findOne({ userId: finalUserId, userType });
     if (!wallet) {
       wallet = new Wallet({
-        userId,
+        userId: finalUserId,
         userType,
         balance: 0,
         availableBalance: 0,
@@ -73,7 +80,7 @@ router.post('/topup', async (req, res, next) => {
     // Create transaction record
     const transaction = new WalletTransaction({
       walletId: wallet._id,
-      userId,
+      userId: finalUserId,
       type: 'topup',
       amount,
       balanceBefore,
@@ -91,7 +98,7 @@ router.post('/topup', async (req, res, next) => {
     try {
       await anchorToBlockchain({
         type: 'wallet_topup',
-        userId,
+        userId: finalUserId,
         amount
       }, 'wallet_topup');
     } catch (err) {
