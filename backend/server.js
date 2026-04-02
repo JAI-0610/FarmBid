@@ -22,6 +22,7 @@ const adminRouter = require('./routes/admin');
 const qualityRouter = require('./routes/quality');
 const walletRouter = require('./routes/wallet');
 const ordersRouter = require('./routes/orders');
+const escrowRouter = require('./routes/escrow');
 
 // Initialize express app
 const app = express();
@@ -77,6 +78,7 @@ app.use('/api/admin', adminRouter);
 app.use('/api/quality', qualityRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/orders', ordersRouter);
+app.use('/api/escrow', escrowRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
