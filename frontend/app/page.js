@@ -652,7 +652,7 @@ export default function App() {
       try {
         const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
         const [listingsRes, eventsRes] = await Promise.all([
-          fetch(`${API_URL}/listings`),
+          fetch(`${API_URL}/listings?status=all`),
           fetch(`${API_URL}/blockchain/events`)
         ])
         const listingsData = await listingsRes.json()

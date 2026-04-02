@@ -1,4 +1,4 @@
-// File: E:\Hackthon\BGSCET\BGSCET\FarmBid\app\page.js
+// File: E:\Hackthon\BGSCET\BGSCET\FarmBid\frontend\app\page.js
 import * as entry from '../../../app/page.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

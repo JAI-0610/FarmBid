@@ -4,7 +4,7 @@
  * Uses whatsapp-web.js with Puppeteer for browser automation
  */
 
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, Poll } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const puppeteer = require('puppeteer');
 const path = require('path');
@@ -77,7 +77,9 @@ const getWhatsAppId = (phone) => {
   if (!normalized) {
     throw new Error('Invalid phone number for WhatsApp delivery');
   }
-  return `whatsapp:${normalized}`;
+  // whatsapp-web.js expects number@c.us format (no + prefix)
+  const digits = normalized.replace(/^\+/, '');
+  return `${digits}@c.us`;
 };
 
 const getBrowserExecutable = () => {
@@ -155,12 +157,51 @@ if (browserExecutablePath) {
   puppeteerOptions.executablePath = browserExecutablePath;
 }
 
+// Clean up stale Puppeteer lock files that prevent re-launch
+const cleanupStaleLocks = () => {
+  try {
+    const sessionDir = path.join(sessionPath, 'session-farmbid-whatsapp');
+    if (fs.existsSync(sessionDir)) {
+      const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
+      for (const lockFile of lockFiles) {
+        const lockPath = path.join(sessionDir, 'Default', lockFile);
+        if (fs.existsSync(lockPath)) {
+          fs.unlinkSync(lockPath);
+          console.log(`[WhatsApp] Removed stale lock: ${lockFile}`);
+        }
+        // Also check in session root
+        const rootLockPath = path.join(sessionDir, lockFile);
+        if (fs.existsSync(rootLockPath)) {
+          fs.unlinkSync(rootLockPath);
+          console.log(`[WhatsApp] Removed stale lock: ${lockFile} (root)`);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[WhatsApp] Could not clean up stale locks:', err.message);
+  }
+};
+
 // WhatsApp client initialization
-const initClient = () => {
+const initClient = async () => {
   if (!Client || !LocalAuth) {
     console.error('[WhatsApp] whatsapp-web.js not loaded properly');
     return;
   }
+
+  // Destroy any existing client first
+  if (client) {
+    try {
+      await client.destroy();
+    } catch (err) {
+      console.warn('[WhatsApp] Could not destroy previous client:', err.message);
+    }
+    client = null;
+    clientReady = false;
+  }
+
+  // Clean up stale browser locks from previous crash
+  cleanupStaleLocks();
 
   try {
     client = new Client({
@@ -238,13 +279,36 @@ const initClient = () => {
       }
     });
 
+    // Poll vote handler
+    client.on('vote_update', async (vote) => {
+      try {
+        if (!clientReady) return;
+        if (!vote.selectedOptions || vote.selectedOptions.length === 0) return;
+        
+        const selectedText = vote.selectedOptions[0].name;
+        const mockMsg = {
+          from: vote.voter,
+          body: selectedText,
+          hasMedia: false,
+          reply: async (content) => client.sendMessage(vote.voter, content),
+          getContact: async () => ({ pushname: null })
+        };
+        await handleFarmerMessage(mockMsg);
+      } catch (err) {
+        console.error('[WhatsApp] Error handling vote_update:', err);
+      }
+    });
+
     // Initialize the client
     console.log('[WhatsApp] Initializing WhatsApp client...');
-    client.initialize();
+    await client.initialize();
 
   } catch (err) {
-    console.error('[WhatsApp] Failed to initialize client:', err);
+    console.error('[WhatsApp] ⚠️  Failed to initialize client:', err.message);
+    console.error('[WhatsApp] The server will continue running without WhatsApp.');
+    console.error('[WhatsApp] To fix: kill any leftover chrome/chromium processes and restart.');
     clientReady = false;
+    client = null;
   }
 };
 
@@ -267,9 +331,13 @@ const flushPendingMessages = async () => {
   }
 };
 
-// Internal send message (no queue)
-const sendMessageInternal = async ({ to, body }) => {
-  const toAddress = to.startsWith('whatsapp:') ? to : getWhatsAppId(to);
+// Internal send message with retry logic for execution context errors
+const MAX_SEND_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 2000;
+
+const sendMessageInternal = async ({ to, body }, retryCount = 0) => {
+  // Normalize to @c.us format
+  const toAddress = to.endsWith('@c.us') ? to : getWhatsAppId(to);
 
   if (!client || !clientReady) {
     throw new Error('WhatsApp client not ready');
@@ -280,6 +348,21 @@ const sendMessageInternal = async ({ to, body }) => {
     console.log(`[WhatsApp] Message sent to ${toAddress}: ${body.substring(0, 50)}${body.length > 50 ? '...' : ''}`);
     return result;
   } catch (err) {
+    const isContextError = err.message && (
+      err.message.includes('Execution context was destroyed') ||
+      err.message.includes('context') ||
+      err.message.includes('navigation') ||
+      err.message.includes('Target closed') ||
+      err.message.includes('Session closed')
+    );
+
+    if (isContextError && retryCount < MAX_SEND_RETRIES) {
+      const delay = RETRY_BASE_DELAY_MS * Math.pow(2, retryCount);
+      console.warn(`[WhatsApp] Execution context error, retrying in ${delay}ms (attempt ${retryCount + 1}/${MAX_SEND_RETRIES})...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return sendMessageInternal({ to, body }, retryCount + 1);
+    }
+
     console.error(`[WhatsApp] Failed to send message to ${toAddress}:`, err.message);
     throw err;
   }
@@ -321,7 +404,7 @@ const saveMedia = async (msg, phone) => {
 };
 
 // Farmer management
-const getOrCreateFarmer = (phone) => {
+const getOrCreateFarmer = async (phone) => {
   const normalized = normalizePhone(phone);
   if (!normalized) {
     throw new Error('Invalid phone number.');
@@ -329,13 +412,26 @@ const getOrCreateFarmer = (phone) => {
 
   let farmer = farmerStore.get(normalized);
   if (!farmer) {
+    let dbName = null;
+    let trustScore = 0;
+    // Check MongoDB to avoid repeated authentication
+    if (FarmerModel) {
+      try {
+        const existing = await FarmerModel.findOne({ phone: normalized });
+        if (existing) {
+          dbName = existing.name;
+          trustScore = existing.trustScore || 100;
+        }
+      } catch (err) {}
+    }
+
     farmer = {
       phone: normalized,
-      name: null,
+      name: dbName,
       aadhaar: null,
       upiId: null,
-      trustScore: 0,
-      state: 0,
+      trustScore: trustScore,
+      state: dbName ? 4 : 0, // Direct to main menu if recognized!
       listingStep: null,
       tempListing: { images: [] },
       registeredAt: null,
@@ -343,7 +439,7 @@ const getOrCreateFarmer = (phone) => {
       violations: 0
     };
     farmerStore.set(normalized, farmer);
-    console.log(`[WhatsApp] Created new farmer record for ${normalized}`);
+    console.log(`[WhatsApp] Created new farmer record for ${normalized}. Recognized: ${!!dbName}`);
   }
 
   return farmer;
@@ -357,19 +453,58 @@ const handleFarmerMessage = async (msg) => {
     return;
   }
 
-  const farmer = getOrCreateFarmer(phone);
+  const farmer = await getOrCreateFarmer(phone);
+  
+  // Try to safely get pushname without hanging
+  try {
+    const notifyName = msg._data && msg._data.notifyName;
+    if (notifyName && (!farmer.name || farmer.state === 0)) {
+      farmer.name = notifyName;
+    } else if (msg.getContact && (!farmer.name || farmer.state === 0)) {
+      // Promise race to prevent infinite hang
+      const contactPromise = msg.getContact();
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000));
+      const contact = await Promise.race([contactPromise, timeoutPromise]);
+      const pushname = contact.pushname || contact.name;
+      if (pushname) farmer.name = pushname;
+    }
+  } catch (e) {
+    console.log('[WhatsApp] Could not fetch contact name, using default.');
+  }
+  
+  if (!farmer.name) farmer.name = 'Farmer';
+
   const body = msg.body?.trim() || '';
   const lower = body.toLowerCase();
   let reply = null;
 
-  const sendReply = async (text) => {
-    if (text) {
+  const sendReply = async (content) => {
+    if (!content) return;
+    // Retry logic: try msg.reply first, then fall back to sendMessage with retries
+    for (let attempt = 0; attempt < MAX_SEND_RETRIES; attempt++) {
       try {
-        await msg.reply(text);
+        if (attempt === 0 && msg.reply) {
+          await msg.reply(content);
+        } else {
+          await sendMessageInternal({ to: phone, body: content });
+        }
+        return; // success
       } catch (err) {
-        console.error('[WhatsApp] Failed to send reply:', err.message);
-        // Try sending as new message if reply fails
-        await sendMessage({ to: phone, body: text });
+        const isContextError = err.message && (
+          err.message.includes('Execution context was destroyed') ||
+          err.message.includes('context') ||
+          err.message.includes('navigation') ||
+          err.message.includes('Target closed') ||
+          err.message.includes('Session closed')
+        );
+        if (isContextError && attempt < MAX_SEND_RETRIES - 1) {
+          const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+          console.warn(`[WhatsApp] Reply failed (attempt ${attempt + 1}), retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          console.error('[WhatsApp] Failed to send reply after retries:', err.message);
+          throw err;
+        }
       }
     }
   };
@@ -381,81 +516,51 @@ const handleFarmerMessage = async (msg) => {
 
   // State machine for farmer registration and listing creation
   if (farmer.state === 0) {
-    if (lower === 'yes' || lower === 'y') {
-      transitionState(1);
+    if (lower === 'yes' || lower === 'y' || lower === 'yes, i am a farmer') {
+      transitionState(3); // SKIP Aadhaar & OTP straight to UPI Check
       farmer.listingStep = null;
-      reply = 'Please send your 12-digit Aadhaar number.';
+      reply = `Thank you, ${farmer.name}! Please send your UPI ID for payments (or type SKIP to add later).`;
+      await sendReply(reply);
+      return;
     } else {
-      reply = 'Welcome to FARM BID! Are you a farmer? Reply YES to register.';
+      reply = `Welcome to FARM BID, ${farmer.name}! Are you a farmer?\n\nReply YES to register.`;
+      await sendReply(reply);
+      return;
     }
-    await sendReply(reply);
-    return;
   }
 
-  if (farmer.state === 1) {
-    if (/^\d{12}$/.test(body)) {
-      const result = await verifyAadhaar(body);
-      if (result.success) {
-        farmer.aadhaar = hashAadhaar(body);
-        farmer.name = result.name;
-        transitionState(2);
-        reply = `✅ Aadhaar verified for ${result.name}. Please send the 6-digit OTP.`;
-      } else {
-        reply = '❌ Invalid Aadhaar. Please try again.';
-      }
-    } else {
-      reply = '⚠️  Aadhaar must be exactly 12 digits. Please send your 12-digit Aadhaar number.';
-    }
-    await sendReply(reply);
-    return;
-  }
-
-  if (farmer.state === 2) {
-    if (/^\d{6}$/.test(body)) {
-      const result = await verifyOTP(phone, body);
-      if (result.success) {
-        transitionState(3);
-        reply = `✅ Identity verified! Welcome ${farmer.name}. Please send your UPI ID for payment (example: yourname@upi).`;
-      } else {
-        farmer.aadhaar = null;
-        farmer.name = null;
-        farmer.state = 0;
-        farmer.listingStep = null;
-        farmer.tempListing.images = [];
-        reply = '❌ Wrong OTP. Your chat session has been restarted. Reply YES to begin registration again.';
-      }
-    } else {
-      reply = '⚠️  OTP must be exactly 6 digits. Please send the OTP.';
-    }
-    await sendReply(reply);
-    return;
-  }
+  // Skip state 1 and 2 (Aadhaar & OTP)
 
   if (farmer.state === 3) {
-    if (/^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(body)) {
-      const result = await verifyUPI(body);
-      if (result.success) {
-        farmer.upiId = body;
-        farmer.trustScore = 100;
-        farmer.registeredAt = new Date();
-        farmer.totalListings = farmer.totalListings || 0;
-        farmer.violations = farmer.violations || 0;
-        transitionState(4);
-        farmer.listingStep = null;
-        farmer.tempListing.images = [];
-        reply = `✅ UPI verified! You are now registered, ${farmer.name}.\n\n${buildRegisteredMenu(farmer.name)}`;
-      } else {
-        reply = '❌ UPI verification failed. Please check and retry.';
+    if (lower === 'skip' || /^[a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64}$/.test(body)) {
+      if (lower !== 'skip') {
+        const result = await verifyUPI(body);
+        if (result.success) {
+          farmer.upiId = body;
+        } else {
+          reply = '❌ UPI verification failed. Please check and retry or type SKIP.';
+          await sendReply(reply);
+          return;
+        }
       }
+      farmer.trustScore = 100;
+      farmer.registeredAt = new Date();
+      farmer.totalListings = farmer.totalListings || 0;
+      farmer.violations = farmer.violations || 0;
+      transitionState(4);
+      farmer.listingStep = null;
+      farmer.tempListing.images = [];
+      reply = `Registration complete, ${farmer.name}!\n\nWhat would you like to do?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score\n\nReply with 1, 2, or 3`;
+      await sendReply(reply);
     } else {
-      reply = '⚠️  Invalid UPI format. Please send your UPI ID like: yourname@upi';
+      reply = '⚠️  Invalid format. Please send your UPI ID (like yourname@upi) or type SKIP.';
+      await sendReply(reply);
     }
-    await sendReply(reply);
     return;
   }
 
   if (farmer.state === 4) {
-    if (lower === '1') {
+    if (lower === '1' || lower === 'create new listing') {
       transitionState(5);
       farmer.listingStep = 'awaiting_photo';
       farmer.tempListing = { images: [] };
@@ -464,13 +569,13 @@ const handleFarmerMessage = async (msg) => {
       return;
     }
 
-    if (lower === '2') {
+    if (lower === '2' || lower === 'view my active listings') {
       const activeListings = Array.from(listingStore.values()).filter(
         (listing) => listing.farmerPhone === phone && listing.status === 'active'
       );
 
       if (activeListings.length === 0) {
-        reply = '📭 You have no active listings right now. Reply 1 to create a new listing.';
+        reply = '📭 You have no active listings right now.';
       } else {
         const summary = activeListings
           .map(
@@ -480,16 +585,20 @@ const handleFarmerMessage = async (msg) => {
         reply = `📋 Your active listings:\n\n${summary}`;
       }
       await sendReply(reply);
-      return;
-    }
-
-    if (lower === '3') {
-      reply = `📊 Your trust score is ${farmer.trustScore}/100.`;
+      reply = 'What would you like to do next?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score';
       await sendReply(reply);
       return;
     }
 
-    reply = `❓ Sorry, I did not understand that.\n\n${buildRegisteredMenu(farmer.name)}`;
+    if (lower === '3' || lower === 'view my trust score') {
+      reply = `📊 Your trust score is ${farmer.trustScore}/100.`;
+      await sendReply(reply);
+      reply = 'What would you like to do next?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score';
+      await sendReply(reply);
+      return;
+    }
+
+    reply = `❓ Sorry, I did not understand that.\n\n${farmer.name}, what would you like to do?\n\n1️⃣ Create new listing\n2️⃣ View my active listings\n3️⃣ View my trust score`;
     await sendReply(reply);
     return;
   }
@@ -502,8 +611,9 @@ const handleFarmerMessage = async (msg) => {
         try {
           const photoPath = await saveMedia(msg, phone);
           farmer.tempListing.images.push(photoPath);
-          reply = `✅ Photo received! (${farmer.tempListing.images.length} image saved).\nNow send the total weight in kg. Example: 100`;
-          farmer.listingStep = 'awaiting_weight';
+          reply = `✅ Photo received! (${farmer.tempListing.images.length} image saved).\n\nIf you want to add more photos, just send them now.\nOtherwise, what is the name of your produce? (e.g. Tomatoes, Chilies)`;
+          // Do not wait strictly, allow taking text
+          farmer.listingStep = 'awaiting_produce_name';
         } catch (err) {
           reply = '❌ Could not save the photo. Please send it again.';
         }
@@ -511,6 +621,30 @@ const handleFarmerMessage = async (msg) => {
         reply = '⚠️  Please send a clear photo of your produce.';
       }
       await sendReply(reply);
+      return;
+    }
+
+    if (step === 'awaiting_produce_name') {
+      // Allow accepting MULTIPLE photos even if state advanced here!
+      if (msg.hasMedia) {
+        try {
+          const photoPath = await saveMedia(msg, phone);
+          farmer.tempListing.images.push(photoPath);
+          reply = `✅ Extra photo added (${farmer.tempListing.images.length} total).\n\nWhat is the name of your produce? (e.g. Tomatoes, Chilies)`;
+          await sendReply(reply);
+          return;
+        } catch (err) {}
+      }
+
+      // Must be at least 2 chars and NOT an empty caption from media
+      if (body.trim().length >= 2 && !msg.hasMedia) {
+        farmer.tempListing.produce = body.trim();
+        reply = `✅ Produce name noted (${farmer.tempListing.produce})! Now send the total weight in kg. Example: 100`;
+        farmer.listingStep = 'awaiting_weight';
+      } else if (!msg.hasMedia) {
+        reply = '⚠️ Please enter a valid produce name (e.g. Tomatoes).';
+      }
+      if (reply) await sendReply(reply);
       return;
     }
 
@@ -530,29 +664,34 @@ const handleFarmerMessage = async (msg) => {
       if (/^\d+(\.\d+)?$/.test(body)) {
         farmer.tempListing.minPrice = parseFloat(body);
         farmer.listingStep = 'awaiting_harvest_date';
-        reply = '✅ Price noted! When will the produce be ready? Send date as DD-MM-YYYY';
+        reply = '✅ Price noted! When will the produce be ready?\n\n1️⃣ Tomorrow\n2️⃣ In 3 days\n3️⃣ In 1 week\n4️⃣ In 2 weeks\n5️⃣ In 1 month\n\nReply with 1, 2, 3, 4, or 5';
+        await sendReply(reply);
       } else {
         reply = '⚠️  Price must be a number. Please send your minimum price per kg in rupees.';
+        await sendReply(reply);
       }
-      await sendReply(reply);
       return;
     }
 
     if (step === 'awaiting_harvest_date') {
-      if (/^\d{2}-\d{2}-\d{4}$/.test(body)) {
-        const [day, month, year] = body.split('-').map(Number);
-        const date = new Date(year, month - 1, day);
-        if (
-          date.getFullYear() === year &&
-          date.getMonth() === month - 1 &&
-          date.getDate() === day
-        ) {
-          farmer.tempListing.harvestDate = body;
-          await completeListingCreation(phone, farmer);
-          return;
-        }
+      let daysAhead;
+      if (lower.includes('tomorrow') || lower === '1') daysAhead = 1;
+      else if (lower.includes('3 days') || lower === '2') daysAhead = 3;
+      else if (lower.includes('1 week') || lower === '3') daysAhead = 7;
+      else if (lower.includes('2 weeks') || lower === '4') daysAhead = 14;
+      else if (lower.includes('1 month') || lower === '5') daysAhead = 30;
+
+      if (daysAhead !== undefined) {
+        const harvestDate = new Date();
+        harvestDate.setDate(harvestDate.getDate() + daysAhead);
+        const dd = String(harvestDate.getDate()).padStart(2, '0');
+        const mm = String(harvestDate.getMonth() + 1).padStart(2, '0');
+        const yyyy = harvestDate.getFullYear();
+        farmer.tempListing.harvestDate = `${dd}-${mm}-${yyyy}`;
+        await completeListingCreation(phone, farmer);
+        return;
       }
-      reply = '❌ Invalid date. Please send harvest date as DD-MM-YYYY. Example: 15-12-2024';
+      reply = '⚠️ Please reply with a valid number:\n\n1️⃣ Tomorrow\n2️⃣ In 3 days\n3️⃣ In 1 week\n4️⃣ In 2 weeks\n5️⃣ In 1 month';
       await sendReply(reply);
       return;
     }
@@ -562,7 +701,7 @@ const handleFarmerMessage = async (msg) => {
     return;
   }
 
-  reply = '❓ Sorry, I did not understand that. Please follow the prompts.';
+  reply = '❓ Sorry, I did not understand that. Please reply with a valid option.';
   await sendReply(reply);
 };
 
@@ -642,9 +781,9 @@ const completeListingCreation = async (phone, farmer) => {
       console.log('[WhatsApp] Listing saved to MongoDB:', dbListing._id);
     }
 
-    // Store in local memory store
+    // Store in local memory store only if DB save didn't happen
     const newListing = {
-      listingId: listingResult.listingId,
+      listingId: listingResult.listingId || `l-${Date.now()}`,
       farmerPhone: phone,
       farmerName: farmer.name || 'WhatsApp Farmer',
       farmerTrustScore: farmer.trustScore,
@@ -657,7 +796,6 @@ const completeListingCreation = async (phone, farmer) => {
       currentBidPerKg: farmer.tempListing.minPrice,
       totalBids: 0,
       harvestDate: farmer.tempListing.harvestDate,
-      totalBids: 0,
       qualityIndex: listingResult.qualityIndex || 85,
       qualityGrade: 'Standard',
       status: 'active',
@@ -665,7 +803,9 @@ const completeListingCreation = async (phone, farmer) => {
       createdAt: new Date().toISOString()
     };
 
-    listingStore.set(newListing.listingId, newListing);
+    if (!FarmerModel || !Listing) {
+      listingStore.set(newListing.listingId, newListing);
+    }
 
     // Reset farmer state
     farmer.totalListings += 1;
@@ -723,12 +863,20 @@ const buildRegisteredMenu = (name) => {
   return `📋 ${name}, what would you like to do?\n\n1. Create new listing\n2. View my active listings\n3. View my trust score\n\nReply with 1, 2, or 3`;
 };
 
-// Initialize the client when this module loads
+// Initialize the client when this module loads (non-blocking, non-crashing)
 ensureUploadDir().then(() => {
   console.log('[WhatsApp] Upload directory ready:', uploadDir);
 }).catch(console.error);
 
-initClient();
+// Use async IIFE so the require() doesn't throw and crash the server
+(async () => {
+  try {
+    await initClient();
+  } catch (err) {
+    console.error('[WhatsApp] ⚠️  WhatsApp initialization failed:', err.message);
+    console.error('[WhatsApp] Server will continue without WhatsApp support.');
+  }
+})();
 
 // Export public API
 module.exports = {

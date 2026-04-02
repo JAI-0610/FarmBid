@@ -495,6 +495,7 @@ const seedDatabase = async () => {
       const bid = new Bid({
         listingId,
         buyerId,
+        buyerName: bidData.buyerName,
         bidPerKg: bidData.bidPerKg,
         timestamp: new Date(Date.now() - Math.random() * 60 * 60 * 1000)
       });
@@ -513,7 +514,7 @@ const seedDatabase = async () => {
         ...auctionData,
         farmerId: farmer ? farmer._id : null,
         buyerId: buyer ? buyer._id.toString() : null,
-        listingId: null // This would be linked to an actual listing
+        listingId: listings[0]._id
       });
       await auction.save();
       auctions.push(auction);
@@ -542,7 +543,7 @@ const seedDatabase = async () => {
 
       const dispute = new Dispute({
         ...disputeData,
-        auctionId: auction ? auction._id : null,
+        auctionId: auction ? auction._id : auctions[0]._id,
         farmerId: farmer ? farmer._id : null
       });
       await dispute.save();

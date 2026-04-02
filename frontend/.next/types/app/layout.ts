@@ -1,4 +1,4 @@
-// File: E:\Hackthon\BGSCET\BGSCET\FarmBid\app\layout.js
+// File: E:\Hackthon\BGSCET\BGSCET\FarmBid\frontend\app\layout.js
 import * as entry from '../../../app/layout.js'
 import type { ResolvingMetadata, ResolvingViewport } from 'next/dist/lib/metadata/types/metadata-interface.js'
 

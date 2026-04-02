@@ -27,16 +27,12 @@
           "value": "frame-ancestors *;"
         },
         {
-          "key": "Access-Control-Allow-Origin",
-          "value": "*"
-        },
-        {
           "key": "Access-Control-Allow-Methods",
           "value": "GET, POST, PUT, DELETE, OPTIONS"
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "*"
+          "value": "Content-Type, Authorization"
         }
       ],
       "regex": "^(?:/(.*))(?:/)?$"
@@ -76,6 +72,12 @@
       "regex": "^/_not\\-found(?:/)?$",
       "routeKeys": {},
       "namedRegex": "^/_not\\-found(?:/)?$"
+    },
+    {
+      "page": "/login",
+      "regex": "^/login(?:/)?$",
+      "routeKeys": {},
+      "namedRegex": "^/login(?:/)?$"
     }
   ],
   "dataRoutes": [],

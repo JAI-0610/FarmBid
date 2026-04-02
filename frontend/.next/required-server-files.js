@@ -95,7 +95,6 @@ self.__SERVER_FILES_MANIFEST={
     "compiler": {},
     "expireTime": 31536000,
     "staticPageGenerationTimeout": 60,
-    "output": "standalone",
     "modularizeImports": {
       "@mui/icons-material": {
         "transform": "@mui/icons-material/{{member}}"
@@ -104,7 +103,7 @@ self.__SERVER_FILES_MANIFEST={
         "transform": "lodash/{{member}}"
       }
     },
-    "outputFileTracingRoot": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid",
+    "outputFileTracingRoot": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid\\frontend",
     "cacheComponents": false,
     "cacheLife": {
       "default": {
@@ -304,11 +303,11 @@ self.__SERVER_FILES_MANIFEST={
     "bundlePagesRouterDependencies": false,
     "configFileName": "next.config.js",
     "turbopack": {
-      "root": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid"
+      "root": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid\\frontend"
     },
     "distDirRoot": ".next"
   },
-  "appDir": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid",
+  "appDir": "E:\\Hackthon\\BGSCET\\BGSCET\\FarmBid\\frontend",
   "relativeAppDir": "",
   "files": [
     ".next\\routes-manifest.json",

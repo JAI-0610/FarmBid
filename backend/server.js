@@ -33,7 +33,9 @@ connectDB().catch(err => {
 });
 
 // Security middleware
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // CORS configuration
 const corsOptions = {

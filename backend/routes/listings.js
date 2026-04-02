@@ -31,7 +31,8 @@ router.get('/', async (req, res, next) => {
     const getPublicImageUrl = (req, imagePath) => {
       if (!imagePath) return imagePath;
       if (/^https?:\/\//i.test(imagePath) || /^data:/i.test(imagePath)) return imagePath;
-      const fileName = imagePath.includes('/') ? imagePath.split('/').pop() : imagePath;
+      const normalizedPath = imagePath.replace(/\\/g, '/');
+      const fileName = normalizedPath.includes('/') ? normalizedPath.split('/').pop() : normalizedPath;
       return `${req.protocol}://${req.get('host')}/uploads/listings/${fileName}`;
     };
 
@@ -50,6 +51,13 @@ router.get('/', async (req, res, next) => {
 
     const inMemoryListings = Array.from(listingStore.values())
       .filter(listing => listing && listing.status)
+      .filter(listing => {
+        // Exclude memory listings if a DB listing already has the same listingId/farmer
+        return !listings.some(dbListing => 
+          (dbListing.listingId === listing.listingId) || 
+          (dbListing.farmerPhone === listing.farmerPhone && Date.now() - new Date(listing.createdAt).getTime() < 86400000)
+        );
+      })
       .map(listing => {
         const status = listing.status === 'active' ? 'live' : listing.status;
         const images = Array.isArray(listing.images)
@@ -120,7 +128,8 @@ router.get('/:id', async (req, res, next) => {
     const getPublicImageUrl = (req, imagePath) => {
       if (!imagePath) return imagePath;
       if (/^https?:\/\//i.test(imagePath) || /^data:/i.test(imagePath)) return imagePath;
-      const fileName = imagePath.includes('/') ? imagePath.split('/').pop() : imagePath;
+      const normalizedPath = imagePath.replace(/\\/g, '/');
+      const fileName = normalizedPath.includes('/') ? normalizedPath.split('/').pop() : normalizedPath;
       return `${req.protocol}://${req.get('host')}/uploads/listings/${fileName}`;
     };
 

@@ -1,8 +1,9 @@
 const nextConfig = {
-  output: 'standalone',
+
   images: {
     unoptimized: true,
   },
+  turbopack: {},
 
   webpack(config, { dev }) {
     if (dev) {
