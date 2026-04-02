@@ -23,7 +23,10 @@ const qualityRouter = require('./routes/quality');
 const walletRouter = require('./routes/wallet');
 const ordersRouter = require('./routes/orders');
 const escrowRouter = require('./routes/escrow');
+<<<<<<< HEAD
+=======
 const authRouter = require('./routes/auth');
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
 
 // Initialize express app
 const app = express();
@@ -80,7 +83,10 @@ app.use('/api/quality', qualityRouter);
 app.use('/api/wallet', walletRouter);
 app.use('/api/orders', ordersRouter);
 app.use('/api/escrow', escrowRouter);
+<<<<<<< HEAD
+=======
 app.use('/api/auth', authRouter);
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

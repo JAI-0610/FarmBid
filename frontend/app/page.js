@@ -817,12 +817,15 @@ export default function App() {
   }
 
   const handleTopup = async () => {
+<<<<<<< HEAD
+=======
     if (!isAuthenticated || !currentUser) {
       toast.error('Please login to top up wallet');
       router.push('/login');
       return;
     }
 
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
     if (!topupAmount || isNaN(topupAmount) || parseFloat(topupAmount) <= 0) {
       toast.error('Please enter a valid amount')
       return
@@ -831,6 +834,13 @@ export default function App() {
     setTopupLoading(true)
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+<<<<<<< HEAD
+      const response = await fetch(`${API_URL}/wallet/topup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: currentUser?.id || 'b1',
+=======
       const token = localStorage.getItem('farmbid_token');
       const response = await fetch(`${API_URL}/wallet/topup`, {
         method: 'POST',
@@ -840,6 +850,7 @@ export default function App() {
         },
         body: JSON.stringify({
           userId: currentUser.id,
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
           amount: parseFloat(topupAmount),
           paymentMethod: 'upi'
         })
