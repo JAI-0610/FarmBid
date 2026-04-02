@@ -15,12 +15,13 @@ router.get('/events', async (req, res, next) => {
     const events = await BlockchainEvent.find(query)
       .sort({ timestamp: -1 })
       .limit(parseInt(limit))
-      .lean()
-      .map(e => ({ id: e._id, ...e }));
+      .lean();
+
+    const transformedEvents = events.map(e => ({ id: e._id, ...e }));
 
     res.json({
       success: true,
-      events
+      events: transformedEvents
     });
   } catch (error) {
     next(error);

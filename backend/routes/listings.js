@@ -13,6 +13,9 @@ const { listingValidation, handleValidationErrors } = require('../middleware/val
 router.get('/', async (req, res, next) => {
   try {
     const { status = 'live' } = req.query;
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     let query = {};
     if (status && status !== 'all') {
@@ -37,16 +40,16 @@ router.get('/', async (req, res, next) => {
     };
 
     const dbListings = listings.map(listing => ({
-      id: listing._id,
+      id: listing._id.toString(),
       ...listing,
       images: Array.isArray(listing.images)
         ? listing.images.map((img) => getPublicImageUrl(req, img))
         : [],
       ...updateAuctionStatus(listing.auctionEndsAt),
-      farmerId: listing.farmerId._id,
+      farmerId: listing.farmerId?._id?.toString(),
       farmerCode: listing.farmerCode,
       farmerName: listing.farmerName,
-      farmerTrustScore: listing.farmerId.trustScore
+      farmerTrustScore: listing.farmerId?.trustScore
     }));
 
     const inMemoryListings = Array.from(listingStore.values())
@@ -146,7 +149,7 @@ router.get('/:id', async (req, res, next) => {
           ...updateAuctionStatus(listingResult.auctionEndsAt)
         }
       : {
-          id: listing._id,
+          id: listing._id.toString(),
           ...listing.toObject(),
           images: Array.isArray(listing.images)
             ? listing.images.map((img) => getPublicImageUrl(req, img))

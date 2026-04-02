@@ -185,7 +185,7 @@ const AuctionCard = ({ listing, onBid }) => {
       animate={{ opacity: 1, y: 0 }}
       className="auction-card-glow"
     >
-      <Card className="overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50">
+      <Card className={`overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50 ${listing.isUpdating ? 'border-primary ring-2 ring-primary/50 animate-pulse' : ''}`}>
         <div className="relative">
           <img
             src={listing.images?.[0] || 'https://images.pexels.com/photos/15279908/pexels-photo-15279908.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940'}
@@ -618,25 +618,46 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
+  // Track listings that are currently updating (price changed)
+  const [updatingListingIds, setUpdatingListingIds] = useState(new Set())
+
   // Check authentication on mount
   useEffect(() => {
-    const checkAuth = () => {
+    const checkAuth = async () => {
       const token = localStorage.getItem('farmbid_token')
       const userData = localStorage.getItem('farmbid_user')
-      
+
       if (token && userData) {
         try {
-          const user = JSON.parse(userData)
-          setCurrentUser(user)
-          setIsAuthenticated(true)
-          setWalletBalance(user.walletBalance || 50000)
+          // Verify token with server
+          const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+          const response = await fetch(`${API_URL}/auth/verify-token`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.authenticated) {
+            const user = data.user;
+            setCurrentUser(user);
+            setIsAuthenticated(true);
+            setWalletBalance(user.walletBalance || 50000);
+          } else {
+            // Token invalid or expired
+            console.error('Auth verification failed:', data.error);
+            handleLogout();
+          }
         } catch (e) {
-          console.error('Error parsing user data:', e)
-          handleLogout()
+          console.error('Error during auth verification:', e);
+          handleLogout();
         }
       }
-    }
-    checkAuth()
+    };
+    checkAuth();
   }, [])
 
   // Handle logout
@@ -673,7 +694,62 @@ export default function App() {
       }
     }
     fetchData()
-  }, [])
+  }, [currentUser?.id])
+
+  // Polling for realtime listings updates
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    console.log('[Realtime] Starting bid polling interval');
+    const pollInterval = setInterval(async () => {
+      try {
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+        const res = await fetch(`${API_URL}/listings?status=all&t=${Date.now()}`);
+        const data = await res.json();
+
+        if (data.success && data.listings) {
+          setListings(prevListings => {
+            const newListings = data.listings;
+            const updated = newListings.map(newListing => {
+              const oldListing = prevListings.find(l => String(l.id) === String(newListing.id));
+              
+              if (oldListing) {
+                const oldPrice = Number(oldListing.currentBidPerKg);
+                const newPrice = Number(newListing.currentBidPerKg);
+                
+                if (oldPrice !== newPrice) {
+                  console.log(`[Realtime] Bid update detected for ${newListing.produce}: ₹${oldPrice} -> ₹${newPrice}`);
+                  
+                  // Mark as updating for visual feedback
+                  setUpdatingListingIds(prev => new Set(prev).add(newListing.id));
+                  
+                  // Remove updating flag after 2 seconds
+                  setTimeout(() => {
+                    setUpdatingListingIds(prev => {
+                      const newSet = new Set(prev);
+                      newSet.delete(newListing.id);
+                      return newSet;
+                    });
+                  }, 2000);
+                  
+                  return { ...newListing, isUpdating: true };
+                }
+              }
+              return newListing;
+            });
+            return updated;
+          });
+        }
+      } catch (error) {
+        console.error('[Realtime] Polling error:', error);
+      }
+    }, 4000); // Poll every 4 seconds
+
+    return () => {
+      console.log('[Realtime] Stopping bid polling interval');
+      clearInterval(pollInterval);
+    };
+  }, [isAuthenticated]);
 
   // Toggle dark mode
   useEffect(() => {
@@ -687,13 +763,28 @@ export default function App() {
 
   const handleSubmitBid = async (listingId, bidAmount) => {
     try {
+      if (!isAuthenticated || !currentUser) {
+        toast.error('Please login to place a bid');
+        router.push('/login');
+        return;
+      }
+
+      if (currentUser.role !== 'buyer') {
+        toast.error('Only buyers can place bids');
+        return;
+      }
+
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+      const token = localStorage.getItem('farmbid_token');
       const response = await fetch(`${API_URL}/bids`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           listingId,
-          buyerId: 'b1',
+          buyerId: currentUser.id,
           bidPerKg: bidAmount
         })
       })
@@ -702,12 +793,19 @@ export default function App() {
         toast.success('Bid placed successfully!', {
           description: `Your bid of ${formatINR(bidAmount)}/kg has been anchored to blockchain.`
         })
+        console.log(`[BidSubmit] Success! Updating listing ${listingId} locally to ₹${bidAmount}`);
         // Update listings
-        setListings(prev => prev.map(l =>
-          l.id === listingId
-            ? { ...l, currentBidPerKg: bidAmount, totalBids: l.totalBids + 1 }
-            : l
-        ))
+        setListings(prev => {
+          const matched = prev.find(l => String(l.id) === String(listingId));
+          if (!matched) {
+            console.warn(`[BidSubmit] Warning: Could not find listing ${listingId} in local state to update UI!`);
+          }
+          return prev.map(l =>
+            String(l.id) === String(listingId)
+              ? { ...l, currentBidPerKg: bidAmount, totalBids: (Number(l.totalBids) || 0) + 1, isUpdating: true }
+              : l
+          );
+        });
         // Add blockchain event
         if (data.blockchainEvent) {
           setBlockchainEvents(prev => [data.blockchainEvent, ...prev])
@@ -719,6 +817,15 @@ export default function App() {
   }
 
   const handleTopup = async () => {
+<<<<<<< HEAD
+=======
+    if (!isAuthenticated || !currentUser) {
+      toast.error('Please login to top up wallet');
+      router.push('/login');
+      return;
+    }
+
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
     if (!topupAmount || isNaN(topupAmount) || parseFloat(topupAmount) <= 0) {
       toast.error('Please enter a valid amount')
       return
@@ -727,11 +834,23 @@ export default function App() {
     setTopupLoading(true)
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+<<<<<<< HEAD
       const response = await fetch(`${API_URL}/wallet/topup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: currentUser?.id || 'b1',
+=======
+      const token = localStorage.getItem('farmbid_token');
+      const response = await fetch(`${API_URL}/wallet/topup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          userId: currentUser.id,
+>>>>>>> b5b037fb5a396c77089f24fbd80ebee1dd6a5570
           amount: parseFloat(topupAmount),
           paymentMethod: 'upi'
         })

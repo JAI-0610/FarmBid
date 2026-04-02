@@ -11,16 +11,46 @@ const { anchorToBlockchain, createBlockchainEvent } = require('../utils/blockcha
 const { sendWhatsAppMessage } = require('../utils/whatsapp');
 const { v4: uuidv4 } = require('uuid');
 const { bidValidation, handleValidationErrors } = require('../middleware/validation');
+const { authenticateJWT, authorizeRole } = require('../middleware/auth');
 
 // POST /api/bids - Place a bid
-router.post('/', handleValidationErrors, bidValidation, async (req, res, next) => {
+router.post('/', authenticateJWT, authorizeRole('buyer'), handleValidationErrors, bidValidation, async (req, res, next) => {
   try {
-    const { listingId, buyerId, bidPerKg } = req.body;
+    const { listingId, bidPerKg } = req.body;
+    // Use authenticated user's ID; ignore any buyerId from body for security
+    const buyerId = req.user.userId;
 
-    // Convert listingId to ObjectId if it's a string
-    const listingObjectId = typeof listingId === 'string' ? listingId : listingId._id;
+    // Verify that the authenticated user's ID matches the requested buyerId (if provided)
+    if (req.body.buyerId && req.body.buyerId !== buyerId) {
+      return res.status(403).json({
+        success: false,
+        error: 'Cannot place bid for another user'
+      });
+    }
 
-    const listing = await Listing.findById(listingObjectId);
+    // Try find in DB first, fallback to Memory Store for recent WhatsApp listings
+    let listing = null;
+    try {
+      listing = await Listing.findById(listingId);
+    } catch (e) {
+      // Not a valid ObjectId or other DB error
+    }
+
+    if (!listing) {
+      listing = Array.from(require('../utils/whatsapp').listingStore.values()).find(
+        l => l.id === listingId || l.listingId === listingId
+      );
+      if (listing) {
+        // Mock a save() function for in-memory listing to avoid crashes
+        listing.save = async () => {
+          require('../utils/whatsapp').listingStore.set(listing.listingId || listing.id, listing);
+          return listing;
+        };
+        // Add required fields if missing for Bid relation
+        listing._id = listing.id || listing.listingId; 
+      }
+    }
+
     if (!listing) {
       return res.status(404).json({
         success: false,
@@ -44,10 +74,22 @@ router.post('/', handleValidationErrors, bidValidation, async (req, res, next) =
       });
     }
 
+    // Fetch buyer name if available
+    let buyerName = buyerId; 
+    try {
+      const buyer = await Buyer.findById(buyerId);
+      if (buyer) {
+        buyerName = buyer.name;
+      }
+    } catch (err) {
+      console.warn('Could not fetch buyer name for bid:', err.message);
+    }
+
     // Create bid
     const bid = new Bid({
       listingId: listing._id,
       buyerId,
+      buyerName,
       bidPerKg,
       timestamp: new Date()
     });
@@ -58,7 +100,7 @@ router.post('/', handleValidationErrors, bidValidation, async (req, res, next) =
     listing.currentBidPerKg = bidPerKg;
     listing.totalBids += 1;
     listing.highestBidderId = buyerId;
-    listing.highestBidderName = buyerId; // Would fetch buyer name in production
+    listing.highestBidderName = buyerName;
     await listing.save();
 
     // Anchor bid to blockchain
